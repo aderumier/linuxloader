@@ -51,7 +51,9 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
         src/loader/config/config.c
         src/loader/input/evdevInput.c
         src/loader/config/gameData.c
-        src/loader/config/configIni.c)
+        src/loader/config/configIni.c
+        src/loader/rawthrills/rtGames.c
+        src/loader/rawthrills/rtLaunch.c)
 
     set_target_properties(linuxloader_exe PROPERTIES LINK_FLAGS "-m32")
     target_link_libraries(linuxloader_exe PRIVATE m SDL3)
@@ -94,6 +96,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
         src/loader/log/*.c
         src/loader/patching/*.c
         src/loader/redirections/*.c
+        src/loader/rawthrills/*.c
         src/loader/graphics/shaderWork/*.c
         src/glad/src/gl.c)
 

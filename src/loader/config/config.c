@@ -194,6 +194,7 @@ void setDefaultValues(EmulatorConfig *cfg)
     cfg->gameGroup = GROUP_UNKNOWN;
     cfg->skipOutrunCabinetCheck = 0;
     cfg->borderEnabled = 0;
+    cfg->rotateVertical = 0;
     cfg->whiteBorderPercentage = 0.02f;
     cfg->blackBorderPercentage = 0.0f;
     cfg->inputMode = 1;
@@ -318,6 +319,7 @@ void applyIniConfig(EmulatorConfig *config, const IniConfig *ini)
     config->boostRenderRes = getInt(ini, "Display", "BOOST_RENDER_RES", config->boostRenderRes);
     config->fullscreen = getInt(ini, "Display", "FULLSCREEN", config->fullscreen);
     config->borderEnabled = getInt(ini, "Display", "BORDER_ENABLED", config->borderEnabled);
+    config->rotateVertical = getInt(ini, "Display", "ROTATE_VERTICAL", config->rotateVertical);
 	config->whiteBorderPercentage = getFloat(ini, "Display", "WHITE_BORDER_PERCENTAGE", config->whiteBorderPercentage * 100.0f) / 100.0f;
 	config->blackBorderPercentage = getFloat(ini, "Display", "BLACK_BORDER_PERCENTAGE", config->blackBorderPercentage * 100.0f) / 100.0f;
     config->keepAspectRatio = getInt(ini, "Display", "KEEP_ASPECT_RATIO", config->keepAspectRatio);
