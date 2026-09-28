@@ -16,6 +16,7 @@
 #define HASP_TOO_SHORT 8
 
 #define ANSWER_KEY_SIZE 16
+#define MAX_ANSWER_KEY_SIZE 32
 #define MEMORY_DUMP "hhl_mem.dmp"
 #define MEMORY_SIZE 128
 #define HASP_SESSION_INFO "<haspid>287339817</haspid>"
@@ -31,6 +32,7 @@
 static uint32_t haspFeature;
 static uint32_t haspMemoryFileId;
 static char answersDir[PATH_MAX];
+static uint32_t answerKeySize = ANSWER_KEY_SIZE;
 static uint8_t memory[MEMORY_SIZE];
 static int memoryLoaded;
 
@@ -93,7 +95,15 @@ static int haspFree(void *info)
 
 // hasp_encrypt/hasp_decrypt: the dongle's AES key never leaves it, so the
 // results come from recorded answers, looked up by the first bytes of the
-// input (the data is a hash or a secret, unique in those bytes).
+// input (the data is a hash or a secret, unique in those bytes). Some games
+// also check the dongle by encrypting a buffer (which must change) and
+// decrypting it back: those are not recorded, and are answered with a
+// stand-in cipher that is its own inverse (an XOR keystream).
+static void standInCrypt(uint8_t *buffer, uint32_t length)
+{
+    for (uint32_t i = 0; i < length; i++)
+        buffer[i] ^= 0xa5 ^ (uint8_t)(i * 0x3b);
+}
 static int haspCrypt(uint32_t handle, uint8_t *buffer, uint32_t length)
 {
     char path[PATH_MAX];
@@ -103,12 +113,19 @@ static int haspCrypt(uint32_t handle, uint8_t *buffer, uint32_t length)
     (void)handle;
     if (length < ANSWER_KEY_SIZE)
         return HASP_TOO_SHORT;
-    for (int i = 0; i < ANSWER_KEY_SIZE && n + 2 < (int)sizeof(path); i++)
+    // Shorter than the recorded answers' names: never recorded.
+    if (length < answerKeySize)
+    {
+        standInCrypt(buffer, length);
+        return HASP_STATUS_OK;
+    }
+    for (uint32_t i = 0; i < answerKeySize && n + 2 < (int)sizeof(path); i++)
         n += snprintf(path + n, sizeof(path) - n, "%02x", buffer[i]);
     if (!(f = fopen(path, "rb")))
     {
-        log_warn("Raw Thrills: no recorded dongle answer %s", path);
-        return HASP_HASP_NOT_FOUND;
+        log_warn("Raw Thrills: no recorded dongle answer %s, using a stand-in", path);
+        standInCrypt(buffer, length);
+        return HASP_STATUS_OK;
     }
     uint8_t *answer = malloc(length);
     size_t got = answer ? fread(answer, 1, length, f) : 0;
@@ -125,11 +142,13 @@ static int haspCrypt(uint32_t handle, uint8_t *buffer, uint32_t length)
     return HASP_STATUS_OK;
 }
 
-static void loadAnswers(const char *dir)
+static void loadAnswers(const char *dir, int keySize)
 {
     char path[PATH_MAX];
     FILE *f;
 
+    if (keySize > 0 && keySize <= MAX_ANSWER_KEY_SIZE)
+        answerKeySize = keySize;
     snprintf(answersDir, sizeof(answersDir), "%s/%s", rtGameDir(), dir);
     snprintf(path, sizeof(path), "%s/" MEMORY_DUMP, answersDir);
     if ((f = fopen(path, "rb")))
@@ -156,7 +175,7 @@ void rtInstallDongle(const RtGame *game)
     haspFeature = game->haspFeature;
     haspMemoryFileId = game->haspMemoryFileId;
     if (game->haspAnswers)
-        loadAnswers(game->haspAnswers);
+        loadAnswers(game->haspAnswers, game->haspAnswerKeySize);
     rtDetour("hasp_login", haspLogin);
     rtDetour("hasp_logout", haspOk);
     rtDetour("hasp_read", haspRead);

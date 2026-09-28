@@ -180,10 +180,16 @@ int __lxstat64(int ver, const char *path, struct stat64 *st)
 }
 
 // ---------------------------------------------------------------------------
-// GL: the glow shaders write gl_FragData[] but also pull in a bloom include
-// that declares "out vec4 out_Bloom". GLSL forbids mixing gl_FragData with
-// user-defined outputs; NVIDIA tolerates it, Mesa refuses to link. Those
-// shaders never write out_Bloom, so it is demoted to a plain global.
+// GL: shader sources NVIDIA accepts but not Mesa.
+// - g5 engine: the glow shaders write gl_FragData[] but also pull in a bloom
+//   include that declares "out vec4 out_Bloom". GLSL forbids mixing
+//   gl_FragData with user-defined outputs; NVIDIA tolerates it, Mesa refuses
+//   to link. Those shaders never write out_Bloom, so it is demoted to a
+//   plain global.
+// - g3 engine: shaders without a #version directive (GLSL 1.10) use GLSL
+//   1.20 features (matrix casts, transpose()): they are compiled as 1.20.
+//   Some index gl_TexCoord[] with a variable, which needs it redeclared
+//   with a size.
 
 typedef unsigned int GLuint;
 typedef int GLint;
@@ -191,6 +197,22 @@ typedef int GLsizei;
 typedef char GLchar;
 
 #define BLOOM_OUTPUT "out vec4 out_Bloom;"
+#define GLSL_120 "#version 120\n"
+#define TEXCOORD_SIZED "varying vec4 gl_TexCoord[gl_MaxTextureCoords];\n"
+
+// gl_TexCoord[] indexed by something else than a number.
+static int texCoordIndexed(const char *src)
+{
+    for (const char *p = strstr(src, "gl_TexCoord["); p; p = strstr(p + 1, "gl_TexCoord["))
+    {
+        const char *i = p + strlen("gl_TexCoord[");
+        while (*i == ' ')
+            i++;
+        if (*i < '0' || *i > '9')
+            return 1;
+    }
+    return 0;
+}
 
 void glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length)
 {
@@ -205,7 +227,7 @@ void glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, c
 
     for (GLsizei i = 0; i < count; i++)
         total += length && length[i] >= 0 ? (size_t)length[i] : strlen(string[i]);
-    if (!(src = malloc(total + 1)))
+    if (!(src = malloc(sizeof(GLSL_120) + sizeof(TEXCOORD_SIZED) + total)))
         return real(shader, count, string, length);
     out = src;
     for (GLsizei i = 0; i < count; i++)
@@ -219,6 +241,13 @@ void glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, c
     char *decl = strstr(src, BLOOM_OUTPUT);
     if (decl && strstr(src, "gl_FragData"))
         memset(decl, ' ', 4); // "out " -> a plain global
+    if (!strstr(src, "#version"))
+    {
+        const char *prefix = texCoordIndexed(src) ? GLSL_120 TEXCOORD_SIZED : GLSL_120;
+        size_t n = strlen(prefix);
+        memmove(src + n, src, total + 1);
+        memcpy(src, prefix, n);
+    }
     const GLchar *one = src;
     real(shader, 1, &one, NULL);
     free(src);

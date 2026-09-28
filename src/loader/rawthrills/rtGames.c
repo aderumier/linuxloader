@@ -307,9 +307,10 @@ static const RtSymbol t4Symbols[] = {
     // provides (op.aud, GameUnit.aud); a lockout stops the game on "Please
     // stand by". Returns 1 when the record has none.
     {"LicenseLockout", 0x081adad0},
-    // Input: the JAMMA board's poll, run each frame, and the input event
-    // queue (event, data).
+    // Input: the JAMMA board's poll, run each frame, the board API
+    // (request, ...) and the input event queue (event, data).
     {"JammaPoll", 0x08063630},
+    {"JammaOp", 0x081d70a3},
     {"PostInputEvent", 0x08062320},
     // Video: select the mode table entry, open the glut window.
     {"SetVideoMode", 0x080c6fc0},
@@ -317,21 +318,24 @@ static const RtSymbol t4Symbols[] = {
     {NULL, 0},
 };
 
-// JAMMA board inputs: the events of the board's switches (press; release is
-// the next event), from the game's switch table.
+// JAMMA board switches, numbered as in the game's switch table (which maps
+// them to input events), and gun events.
 enum
 {
-    T4_GUN0_GRENADE = 0x12,
-    T4_GUN0_TRIGGER = 0x16,
-    T4_GUN1_TRIGGER = 0x18,
-    T4_GUN1_GRENADE = 0x2a,
-    T4_START0 = 0x26,
-    T4_START1 = 0x2e,
-    T4_COIN0 = 0x30,
-    T4_COIN1 = 0x32,
-    T4_TEST = 0x34,
-    T4_SERVICE = 0x3c,
-    // Light gun board: a shot at the gun's position, and that position.
+    T4_GUN0_TRIGGER = 1,
+    T4_GUN1_TRIGGER = 2,
+    T4_GUN0_RELOAD = 3,
+    T4_GUN1_RELOAD = 4,
+    T4_START0 = 5,
+    T4_START1 = 6,
+    T4_COIN0 = 7,
+    T4_COIN1 = 8,
+    T4_SERVICE = 10,
+    T4_TEST = 11,
+    T4_VOLUME_UP = 12, // also moves in the test menus
+    T4_VOLUME_DOWN = 13,
+    // Light gun board messages: a shot at the gun's position, and that
+    // position.
     T4_GUN0_SHOT = 0x10,
     T4_GUN1_SHOT = 0x28,
     T4_GUN_POSITION = 0x45,
@@ -339,16 +343,18 @@ enum
 
 static const RtIoInput t4Switches[] = {
     {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_1},
-    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_3}, // reload: a shot off the screen
-    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_GRENADE, BUTTON_2},
+    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_3}, // a shot off the screen
+    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_RELOAD, BUTTON_2},
     {RT_IO_SWITCH, PLAYER_2, T4_GUN1_TRIGGER, BUTTON_1},
     {RT_IO_SWITCH, PLAYER_2, T4_GUN1_TRIGGER, BUTTON_3},
-    {RT_IO_SWITCH, PLAYER_2, T4_GUN1_GRENADE, BUTTON_2},
+    {RT_IO_SWITCH, PLAYER_2, T4_GUN1_RELOAD, BUTTON_2},
     {RT_IO_SWITCH, PLAYER_1, T4_START0, BUTTON_START},
     {RT_IO_SWITCH, PLAYER_2, T4_START1, BUTTON_START},
     {RT_IO_SWITCH, PLAYER_1, T4_SERVICE, BUTTON_SERVICE},
     {RT_IO_SWITCH, PLAYER_2, T4_SERVICE, BUTTON_SERVICE},
     {RT_IO_SWITCH, SYSTEM, T4_TEST, BUTTON_TEST},
+    {RT_IO_SWITCH, PLAYER_1, T4_VOLUME_UP, BUTTON_UP},
+    {RT_IO_SWITCH, PLAYER_1, T4_VOLUME_DOWN, BUTTON_DOWN},
     {RT_IO_COIN, 0, T4_COIN0, 0},
     {RT_IO_COIN, 1, T4_COIN1, 0},
     {RT_IO_END, 0, 0, 0},
@@ -362,6 +368,38 @@ static const RtJammaGun t4Guns[] = {
 static const RtStub t4Stubs[] = {{"TracerGuard", 1}, {"DiagCheckAllFiles", 0}, {"LicenseLockout", 1}, {NULL, 0}};
 
 static const RtPathAlias t4RootAliases[] = {{"/T4User", "T4User"}, {NULL, NULL}};
+
+// ---------------------------------------------------------------------------
+// Big Buck World (g3 engine), v1.20: built like Terminator Salvation, with
+// its HASP library's trace strings naming the API functions. Its recorded
+// dongle answers are named by the first 32 input bytes.
+
+static const RtSymbol bbwSymbols[] = {
+    {"hasp_login", 0x0839d3d0},
+    {"hasp_logout", 0x0839d470},
+    {"hasp_encrypt", 0x0839d55c},
+    {"hasp_decrypt", 0x0839d648},
+    {"hasp_free", 0x0839dc8c},
+    {"hasp_get_sessioninfo", 0x0839df50},
+    {"hasp_read", 0x0839e1c8},
+    {"hasp_write", 0x0839e294},
+    {"TracerGuard", 0x082dea6a},
+    // Checked from the main loop: the tracer parent is alive and tracing.
+    {"TracerCheck", 0x082ded09},
+    {"DiagCheckAllFiles", 0x080ff8c0},
+    // Opens the glut window: (width, height, fullscreen).
+    {"OpenWindow", 0x0807fa00},
+    {NULL, 0},
+};
+
+static const RtStub bbwStubs[] = {
+    {"TracerGuard", 1},
+    {"TracerCheck", 0},
+    {"DiagCheckAllFiles", 0},
+    {NULL, 0},
+};
+
+static const RtPathAlias bbwRootAliases[] = {{"/bbwuser", "bbwuser"}, {NULL, NULL}};
 
 static const RtGame rtGames[] = {
     {
@@ -496,6 +534,11 @@ static const RtGame rtGames[] = {
         .windowOpenSymbol = "OpenWindow",
         .windowOpenPrologue = 6,
         .jammaPollSymbol = "JammaPoll",
+        // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx; xor %ebx,%ebx"
+        .jammaPollPrologue = 8,
+        .jammaOpSymbol = "JammaOp",
+        // "push %ebp; mov %esp,%ebp; push %ebx; sub $0x74,%esp"
+        .jammaOpPrologue = 7,
         .postEventSymbol = "PostInputEvent",
         .jammaSwitches = t4Switches,
         .jammaGuns = t4Guns,
@@ -503,6 +546,21 @@ static const RtGame rtGames[] = {
         .gunPositionEvent = T4_GUN_POSITION,
         .gunWidth = 640,
         .gunHeight = 480,
+    },
+    {
+        .crc32 = BIG_BUCK_WORLD_RT,
+        .envelopeSelfSlot = -1,
+        .symbols = bbwSymbols,
+        .haspFeature = 0xffff0000,
+        .haspMemoryFileId = 0xfff2,
+        .haspAnswers = "hasp",
+        .haspAnswerKeySize = 32,
+        .stubs = bbwStubs,
+        .rootPath = "/g3",
+        .rootAliases = bbwRootAliases,
+        // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx"
+        .windowOpenSymbol = "OpenWindow",
+        .windowOpenPrologue = 6,
     },
 };
 

@@ -132,12 +132,15 @@ static int windowOpen(int width, int height, int fullscreen)
     return ret;
 }
 
-static void installModeTable(const RtGame *game)
+static void installG3Video(const RtGame *game)
 {
     videoGame = game;
-    setModeOrig = rtTrampoline(game->setModeSymbol, game->setModePrologue);
-    if (!setModeOrig || rtDetour(game->setModeSymbol, setMode) != 0)
-        log_warn("Raw Thrills: cannot hook %s, keeping the game's resolution", game->setModeSymbol);
+    if (game->setModeSymbol)
+    {
+        setModeOrig = rtTrampoline(game->setModeSymbol, game->setModePrologue);
+        if (!setModeOrig || rtDetour(game->setModeSymbol, setMode) != 0)
+            log_warn("Raw Thrills: cannot hook %s, keeping the game's resolution", game->setModeSymbol);
+    }
     if (!game->windowOpenSymbol)
         return;
     windowOpenOrig = rtTrampoline(game->windowOpenSymbol, game->windowOpenPrologue);
@@ -149,8 +152,8 @@ void rtInstallVideo(const RtGame *game)
 {
     const char *symbol = game->parseArgsSymbol ? game->parseArgsSymbol : "ParseCommandLineArgs";
 
-    if (game->setModeSymbol)
-        installModeTable(game);
+    if (game->setModeSymbol || game->windowOpenSymbol)
+        installG3Video(game);
     if (!game->resolution || !game->parseArgsPrologue)
         return;
     videoGame = game;

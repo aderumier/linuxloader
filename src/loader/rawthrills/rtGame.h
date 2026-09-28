@@ -117,9 +117,10 @@ typedef struct
     // Directory, relative to the game directory, of recorded dongle answers
     // (TeknoParrot's "hasp" folder), for games whose data needs the dongle's
     // AES: hasp_encrypt/hasp_decrypt results, each in a file named by the
-    // first 16 bytes of the input in hex, and the dongle memory the game
-    // reads (hhl_mem.dmp). NULL: none.
+    // first haspAnswerKeySize bytes of the input in hex (0: 16), and the
+    // dongle memory the game reads (hhl_mem.dmp). NULL: none.
     const char *haspAnswers;
+    int haspAnswerKeySize;
 
     // A library statically linked into the game whose dumped state is
     // unusable: the game's exported functions with this prefix are sent to
@@ -196,13 +197,17 @@ typedef struct
     const char *windowOpenSymbol;
     size_t windowOpenPrologue;
 
-    // JAMMA I/O board (g3 engine), not emulated: its poll (jammaPollSymbol),
-    // run each frame, is replaced by one posting the input events the board
-    // would have caused (postEventSymbol(event, data)). Switches: io is the
-    // event of a press, a release is the next one. Guns: the position event
-    // (gunPositionEvent) carries the gun's position in the board's
-    // gunWidth x gunHeight space, followed by the press or release events.
+    // JAMMA I/O board (g3 engine): its switch counters are emulated and
+    // handed to the game's requests for them (jammaOpSymbol, the board API);
+    // the game's poll (jammaPollSymbol, run each frame) turns them into
+    // events. Switches: io is the board's switch number. Guns: their shots
+    // are posted (postEventSymbol(event, data)) as the board's messages
+    // would: the position event (gunPositionEvent), with the position in the
+    // board's gunWidth x gunHeight space, then the shot's press or release.
     const char *jammaPollSymbol;
+    size_t jammaPollPrologue;
+    const char *jammaOpSymbol;
+    size_t jammaOpPrologue;
     const char *postEventSymbol;
     const RtIoInput *jammaSwitches;
     const RtJammaGun *jammaGuns;
