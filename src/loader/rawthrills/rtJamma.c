@@ -5,8 +5,10 @@
 // reads the switch counters through its board API (JammaOp) and turns their
 // changes into input events, in its poll run each frame and in its test
 // menus. The board is not there: its switch counters are kept here and
-// handed to the game's requests for them, and the gun shots are posted as
-// the input events the board's messages would have caused. Inputs:
+// handed to the game's requests for them, the gun shots are posted as the
+// input events the board's messages would have caused, and the IR gun
+// manager's aim of each gun (from which the game places the reticle and
+// the shots) is answered with its position. Inputs:
 //  - with evdev input (INPUT_MODE 2), the loader's JVS state: the [EVDEV]
 //    mappings as for the other games (guns: ANALOGUE_1/2 and 3/4, BUTTON_1
 //    fires, BUTTON_2 the reload button, BUTTON_3 reloads by firing off the
@@ -44,15 +46,6 @@
 #define GLUT_DOWN 0
 #define GLUT_WINDOW_WIDTH 102
 #define GLUT_WINDOW_HEIGHT 103
-
-// Data of the gun position event: gun (low nibble) and sensor (high one),
-// then the position and two values the board fills from its IR camera.
-typedef struct
-{
-    int id;
-    int x, y;
-    int extra[2];
-} GunPosition;
 
 static const RtGame *jammaGame;
 static int (*postEvent)(int event, const void *data);
@@ -287,39 +280,57 @@ static void updateSwitches(JVSIO *io)
             boardSwitches[i]++;
 }
 
-// A gun's position in the board's space; off the screen when the gun
-// points at its edge (where light guns report what is outside).
-static int gunPosition(const RtJammaGun *gun, JVSIO *io, int *x, int *y)
+// A gun's position as a fraction of the screen (from its top left); off
+// the screen when the gun points at its edge (where light guns report what
+// is outside).
+static int gunPosition(const RtJammaGun *gun, JVSIO *io, double *x, double *y)
 {
     int max = io->analogueMax, ax = io->state.analogueChannel[gun->xChannel];
     int ay = io->state.analogueChannel[gun->yChannel];
 
     if (max <= 0 || ax <= 0 || ax >= max || ay <= 0 || ay >= max)
         return 0;
-    *x = (int)((double)ax * jammaGame->gunWidth / (max + 1));
-    *y = (int)((double)(max - ay) * jammaGame->gunHeight / (max + 1));
+    *x = (double)ax / (max + 1);
+    *y = (double)(max - ay) / (max + 1);
     return 1;
 }
 
+// Last position of each gun, for the IR gun manager's aim.
+static double aimX[MAX_GUNS], aimY[MAX_GUNS];
+static int aimValid[MAX_GUNS];
+
+// The shot's position comes from the IR gun manager's aim (the game turns
+// it into the board's sensor data itself); the board only reports the
+// trigger. A shot off the screen reloads: the aim is then missing.
 static void updateGun(int g, JVSIO *io)
 {
     const RtJammaGun *gun = &jammaGame->jammaGuns[g];
     int offScreen = buttonHeld(io, gun->player, BUTTON_3);
     int fire = buttonHeld(io, gun->player, BUTTON_1) || offScreen;
-    GunPosition pos = {.x = -1, .y = -1};
+    double x, y;
 
-    if (offScreen || !gunPosition(gun, io, &pos.x, &pos.y))
-        pos.x = pos.y = -1;
-    // The shot and the reload button take their position from sensors 0
-    // and 1: set both before a press.
-    for (int sensor = 0; sensor < 2; sensor++)
+    aimValid[g] = !offScreen && gunPosition(gun, io, &x, &y);
+    if (aimValid[g])
     {
-        pos.id = g | sensor << 4;
-        postEvent(jammaGame->gunPositionEvent, &pos);
+        aimX[g] = x;
+        aimY[g] = y;
     }
     if (fire != gunHeld[g])
         postEvent(fire ? gun->shotEvent : gun->shotEvent + 1, NULL);
     gunHeld[g] = fire;
+}
+
+// The IR gun manager's aim of a player's gun, in its camera space.
+static int gunAim(int player, float *x, float *y, int unused)
+{
+    (void)unused;
+    if (player < 0 || player >= MAX_GUNS)
+        return -1;
+    if (x)
+        *x = aimValid[player] ? (float)(aimX[player] * jammaGame->gunAimWidth) : -1.0f;
+    if (y)
+        *y = aimValid[player] ? (float)(aimY[player] * jammaGame->gunAimHeight) : -1.0f;
+    return 0;
 }
 
 // The game's requests to the board: switch counters from here, the others
@@ -365,10 +376,13 @@ void rtInstallJamma(const RtGame *game)
         return;
     jammaGame = game;
     evdevInput = getConfig()->inputMode == 2;
-    *(void **)&postEvent = rtSymbol(game->postEventSymbol);
+    if (game->jammaGunCount)
+        *(void **)&postEvent = rtSymbol(game->postEventSymbol);
     jammaPollOrig = rtTrampoline(game->jammaPollSymbol, game->jammaPollPrologue);
     jammaOpOrig = rtTrampoline(game->jammaOpSymbol, game->jammaOpPrologue);
-    if (!postEvent || !jammaPollOrig || !jammaOpOrig || rtDetour(game->jammaOpSymbol, jammaOp) != 0 ||
+    if ((game->jammaGunCount && !postEvent) || !jammaPollOrig || !jammaOpOrig || rtDetour(game->jammaOpSymbol, jammaOp) != 0 ||
         rtDetour(game->jammaPollSymbol, jammaPoll) != 0)
         log_error("Raw Thrills: JAMMA board input not installed");
+    if (game->gunAimSymbol && rtDetour(game->gunAimSymbol, gunAim) != 0)
+        log_error("Raw Thrills: gun aim not installed");
 }

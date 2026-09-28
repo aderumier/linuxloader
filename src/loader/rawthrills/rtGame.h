@@ -202,8 +202,7 @@ typedef struct
     // the game's poll (jammaPollSymbol, run each frame) turns them into
     // events. Switches: io is the board's switch number. Guns: their shots
     // are posted (postEventSymbol(event, data)) as the board's messages
-    // would: the position event (gunPositionEvent), with the position in the
-    // board's gunWidth x gunHeight space, then the shot's press or release.
+    // would.
     const char *jammaPollSymbol;
     size_t jammaPollPrologue;
     const char *jammaOpSymbol;
@@ -212,8 +211,11 @@ typedef struct
     const RtIoInput *jammaSwitches;
     const RtJammaGun *jammaGuns;
     int jammaGunCount;
-    uint16_t gunPositionEvent;
-    int gunWidth, gunHeight;
+    // The IR gun manager's aim of a player's gun (player, float *x,
+    // float *y, int), in its gunAimWidth x gunAimHeight camera space (the
+    // reticle follows it): answered from the same gun positions.
+    const char *gunAimSymbol;
+    int gunAimWidth, gunAimHeight;
 } RtGame;
 
 const RtGame *rtGetGame(uint32_t crc32);

@@ -307,6 +307,13 @@ static const RtSymbol t4Symbols[] = {
     // provides (op.aud, GameUnit.aud); a lockout stops the game on "Please
     // stand by". Returns 1 when the record has none.
     {"LicenseLockout", 0x081adad0},
+    // Whether a player's light gun is connected (the IR gun manager found
+    // it on a USB serial port): players join only then.
+    {"GunConnected", 0x08159f00},
+    // The IR gun manager's aim of a player's gun (reticle, ...), and whether
+    // it lost the gun's signal (the aim is then off the screen).
+    {"GunAim", 0x0842e488},
+    {"GunNoSignal", 0x0842e476},
     // Input: the JAMMA board's poll, run each frame, the board API
     // (request, ...) and the input event queue (event, data).
     {"JammaPoll", 0x08063630},
@@ -318,8 +325,8 @@ static const RtSymbol t4Symbols[] = {
     {NULL, 0},
 };
 
-// JAMMA board switches, numbered as in the game's switch table (which maps
-// them to input events), and gun events.
+// JAMMA board switches, numbered as in the games' switch table (which maps
+// them to input events; the same in Big Buck World), and gun events.
 enum
 {
     T4_GUN0_TRIGGER = 1,
@@ -334,14 +341,12 @@ enum
     T4_TEST = 11,
     T4_VOLUME_UP = 12, // also moves in the test menus
     T4_VOLUME_DOWN = 13,
-    // Light gun board messages: a shot at the gun's position, and that
-    // position.
+    // Light gun board messages: a shot.
     T4_GUN0_SHOT = 0x10,
     T4_GUN1_SHOT = 0x28,
-    T4_GUN_POSITION = 0x45,
 };
 
-static const RtIoInput t4Switches[] = {
+static const RtIoInput jammaSwitches[] = {
     {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_1},
     {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_3}, // a shot off the screen
     {RT_IO_SWITCH, PLAYER_1, T4_GUN0_RELOAD, BUTTON_2},
@@ -365,7 +370,7 @@ static const RtJammaGun t4Guns[] = {
     {PLAYER_2, ANALOGUE_3, ANALOGUE_4, T4_GUN1_SHOT},
 };
 
-static const RtStub t4Stubs[] = {{"TracerGuard", 1}, {"DiagCheckAllFiles", 0}, {"LicenseLockout", 1}, {NULL, 0}};
+static const RtStub t4Stubs[] = {{"TracerGuard", 1}, {"DiagCheckAllFiles", 0}, {"LicenseLockout", 1}, {"GunConnected", 1}, {"GunNoSignal", 0}, {NULL, 0}};
 
 static const RtPathAlias t4RootAliases[] = {{"/T4User", "T4User"}, {NULL, NULL}};
 
@@ -389,6 +394,9 @@ static const RtSymbol bbwSymbols[] = {
     {"DiagCheckAllFiles", 0x080ff8c0},
     // Opens the glut window: (width, height, fullscreen).
     {"OpenWindow", 0x0807fa00},
+    // Input: the JAMMA board's poll, run each frame, and the board API.
+    {"JammaPoll", 0x080587d0},
+    {"JammaOp", 0x08209462},
     {NULL, 0},
 };
 
@@ -540,12 +548,12 @@ static const RtGame rtGames[] = {
         // "push %ebp; mov %esp,%ebp; push %ebx; sub $0x74,%esp"
         .jammaOpPrologue = 7,
         .postEventSymbol = "PostInputEvent",
-        .jammaSwitches = t4Switches,
+        .jammaSwitches = jammaSwitches,
         .jammaGuns = t4Guns,
         .jammaGunCount = sizeof(t4Guns) / sizeof(t4Guns[0]),
-        .gunPositionEvent = T4_GUN_POSITION,
-        .gunWidth = 640,
-        .gunHeight = 480,
+        .gunAimSymbol = "GunAim",
+        .gunAimWidth = 800,
+        .gunAimHeight = 600,
     },
     {
         .crc32 = BIG_BUCK_WORLD_RT,
@@ -561,6 +569,14 @@ static const RtGame rtGames[] = {
         // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx"
         .windowOpenSymbol = "OpenWindow",
         .windowOpenPrologue = 6,
+        // Switches only for now: the gun events are not known yet.
+        .jammaPollSymbol = "JammaPoll",
+        // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx; mov $0x8baba40,%edi"
+        .jammaPollPrologue = 11,
+        .jammaOpSymbol = "JammaOp",
+        // "push %ebp; mov %esp,%ebp; push %esi; push %ebx; sub $0x70,%esp"
+        .jammaOpPrologue = 8,
+        .jammaSwitches = jammaSwitches,
     },
 };
 
