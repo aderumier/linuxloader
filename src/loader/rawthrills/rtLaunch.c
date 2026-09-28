@@ -72,7 +72,8 @@ static long vaddrToOffset(const unsigned char *elf, size_t size, Elf32_Addr vadd
     return -1;
 }
 
-// Clear the value of every undefined dynamic symbol that has one.
+// Clear the value of every undefined dynamic symbol that has one, and drop
+// the directory of libraries needed by absolute path.
 static int patchUndefinedSymbols(unsigned char *elf, size_t size)
 {
     const Elf32_Ehdr *eh = (const Elf32_Ehdr *)elf;
@@ -110,6 +111,18 @@ static int patchUndefinedSymbols(unsigned char *elf, size_t size)
             sym->st_value = 0;
             patched++;
         }
+    }
+
+    // Libraries the cabinet loaded from an absolute path: look them up by
+    // name instead (the string is shortened in place).
+    for (const Elf32_Dyn *d = (const Elf32_Dyn *)(elf + dynOff); d->d_tag != DT_NULL; d++)
+    {
+        char *name = (char *)elf + strOff + d->d_un.d_val;
+        char *base;
+        if (d->d_tag != DT_NEEDED || name[0] != '/' || !(base = strrchr(name, '/')))
+            continue;
+        memmove(name, base + 1, strlen(base + 1) + 1);
+        patched++;
     }
     return patched;
 }

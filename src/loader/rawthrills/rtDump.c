@@ -49,12 +49,93 @@ static size_t getPreloaded(void **handles, size_t max)
     return count;
 }
 
-// The loader's GL wrappers patch Lindbergh games (resolution, shaders) and
-// need state set up by the Lindbergh init; Raw Thrills games get the real
-// GL/GLU/glut/GLX functions, apart from the loader's Raw Thrills shader fix.
+// The loader's GL and X11 wrappers patch Lindbergh games (resolution,
+// shaders, its own window) and need state set up by the Lindbergh init; Raw
+// Thrills games get the real GL/GLU/glut/GLX and Xlib functions, apart from
+// the loader's Raw Thrills shader fix.
 static int bypassPreloaded(const char *name)
 {
-    return !strncmp(name, "gl", 2) && strcmp(name, "glShaderSource") != 0;
+    if (!strncmp(name, "gl", 2))
+        return strcmp(name, "glShaderSource") != 0;
+    return name[0] == 'X' && name[1] >= 'A' && name[1] <= 'Z';
+}
+
+static int isPreloaded(const void *handle, void **preloaded, size_t npreloaded)
+{
+    for (size_t i = 0; i < npreloaded; i++)
+        if (preloaded[i] == handle)
+            return 1;
+    return 0;
+}
+
+// The global definition of name is one of a preloaded library (a loader
+// wrapper).
+static int wrapped(const char *name, void **preloaded, size_t npreloaded)
+{
+    void *def = dlsym(RTLD_DEFAULT, name);
+    for (size_t i = 0; def && i < npreloaded; i++)
+        if (dlsym(preloaded[i], name) == def)
+            return 1;
+    return 0;
+}
+
+// ld.so bound the imports of the executable and of the libraries before the
+// loader ran: send those the loader wraps to the real library too. Libraries
+// matter for games that link Xlib/GLX users directly (freeglut): they would
+// get the Lindbergh window instead of theirs. The executable's imports are
+// all rebound; a library's only when they would reach a loader wrapper.
+static void rebindImports(void **preloaded, size_t npreloaded)
+{
+    struct link_map *exe = dlopen(NULL, RTLD_NOW);
+
+    for (struct link_map *obj = exe; obj; obj = obj->l_next)
+    {
+        // PLT slots, and GOT entries of functions called without the PLT
+        // (-fno-plt builds).
+        const Elf32_Rel *rels[2] = {NULL, NULL};
+        size_t relSizes[2] = {0, 0};
+        const Elf32_Sym *symtab = NULL;
+        const char *strtab = NULL;
+
+        if (obj != exe && (!obj->l_name[0] || isPreloaded(obj, preloaded, npreloaded)))
+            continue;
+        for (const Elf32_Dyn *dyn = obj->l_ld; dyn->d_tag != DT_NULL; dyn++)
+        {
+            if (dyn->d_tag == DT_JMPREL)
+                rels[0] = (const Elf32_Rel *)dyn->d_un.d_ptr;
+            else if (dyn->d_tag == DT_PLTRELSZ)
+                relSizes[0] = dyn->d_un.d_val;
+            else if (dyn->d_tag == DT_REL)
+                rels[1] = (const Elf32_Rel *)dyn->d_un.d_ptr;
+            else if (dyn->d_tag == DT_RELSZ)
+                relSizes[1] = dyn->d_un.d_val;
+            else if (dyn->d_tag == DT_SYMTAB)
+                symtab = (const Elf32_Sym *)dyn->d_un.d_ptr;
+            else if (dyn->d_tag == DT_STRTAB)
+                strtab = (const char *)dyn->d_un.d_ptr;
+        }
+        for (int t = 0; t < 2 && symtab && strtab; t++)
+        {
+            for (size_t i = 0; rels[t] && i < relSizes[t] / sizeof(Elf32_Rel); i++)
+            {
+                const Elf32_Rel *rel = &rels[t][i];
+                const Elf32_Sym *sym = &symtab[ELF32_R_SYM(rel->r_info)];
+                const char *name = strtab + sym->st_name;
+                uintptr_t slot = obj->l_addr + rel->r_offset;
+                int type = ELF32_R_TYPE(rel->r_info);
+                void *next;
+
+                if (!(type == R_386_JMP_SLOT || (type == R_386_GLOB_DAT && ELF32_ST_TYPE(sym->st_info) != STT_OBJECT)) ||
+                    !bypassPreloaded(name) || (obj != exe && !wrapped(name, preloaded, npreloaded)) ||
+                    !(next = dlsym(RTLD_NEXT, name)))
+                    continue;
+                // The GOT is read-only in libraries linked with full RELRO.
+                if (obj != exe)
+                    mprotect((void *)(slot & ~(uintptr_t)0xfff), 0x1000, PROT_READ | PROT_WRITE);
+                *(uint32_t *)slot = (uint32_t)(uintptr_t)next;
+            }
+        }
+    }
 }
 
 static void *resolveImport(const char *name, const char *version, void **preloaded, size_t npreloaded)
@@ -86,6 +167,7 @@ int rtFixImports(const RtGame *game)
     for (const char *const *lib = game->extraLibs; lib && *lib; lib++)
         if (!dlopen(*lib, RTLD_NOW | RTLD_GLOBAL))
             log_warn("Raw Thrills: %s: %s", *lib, dlerror());
+    rebindImports(preloaded, npreloaded);
 
     uint32_t *envelopeGot = (uint32_t *)(uintptr_t)game->envelopeGot;
     for (size_t i = 0; i < game->envelopeImportCount; i++)
@@ -124,18 +206,38 @@ int rtFixImports(const RtGame *game)
     return missing;
 }
 
-// The game exports its symbols and its code segment is mapped RWE, so hooks
-// simply overwrite a function entry with a jmp to the replacement.
+// Hooks simply overwrite a function entry with a jmp to the replacement.
+// Game function by name: exported, or listed in the game's descriptor.
+static void *lookup(const char *name)
+{
+    const RtGame *game = rtCurrentGame();
+    void *p = dlsym(RTLD_DEFAULT, name);
+    for (const RtSymbol *s = game ? game->symbols : NULL; !p && s && s->name; s++)
+        if (!strcmp(s->name, name))
+            p = (void *)(uintptr_t)s->address;
+    return p;
+}
+
+void *rtSymbol(const char *name)
+{
+    return lookup(name);
+}
+
 void rtDetourAddress(uint32_t address, void *replacement)
 {
     uint8_t *target = (uint8_t *)(uintptr_t)address;
+
+    // Games that are not dumps map their code read-only.
+    uintptr_t page = address & ~(uintptr_t)0xfff;
+    if (mprotect((void *)page, (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+        log_warn("Raw Thrills: cannot make %#x writable", address);
     target[0] = 0xe9;
     *(int32_t *)(target + 1) = (int32_t)((uint8_t *)replacement - (target + 5));
 }
 
 int rtDetour(const char *name, void *replacement)
 {
-    void *target = dlsym(RTLD_DEFAULT, name);
+    void *target = lookup(name);
     if (!target)
     {
         log_warn("Raw Thrills: hook target %s not found", name);
@@ -150,7 +252,7 @@ int rtDetour(const char *name, void *replacement)
 // still be called once its entry is detoured.
 void *rtTrampoline(const char *name, size_t prologueLength)
 {
-    uint8_t *target = dlsym(RTLD_DEFAULT, name);
+    uint8_t *target = lookup(name);
     if (!target)
         return NULL;
     uint8_t *tramp = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

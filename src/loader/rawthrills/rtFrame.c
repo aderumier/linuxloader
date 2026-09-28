@@ -92,10 +92,65 @@ static void parseCommandLineArgs(int argc, char **argv)
            videoGame->rotateFlag && getConfig()->rotateVertical ? ", rotated" : "");
 }
 
+// g3 engine: mode table entry and glut window.
+
+typedef struct
+{
+    uint32_t flags;
+    uint16_t width;
+    uint16_t height;
+} RtModeEntry;
+
+static int (*setModeOrig)(int mode);
+static int (*windowOpenOrig)(int width, int height, int fullscreen);
+
+static int setMode(int mode)
+{
+    int ret = setModeOrig(mode);
+    RtModeEntry *entry = *(RtModeEntry **)(uintptr_t)videoGame->modePointer;
+    int width = getConfig()->width, height = getConfig()->height;
+
+    if (ret >= 0 && entry && width > 0 && height > 0)
+    {
+        entry->width = width;
+        entry->height = height;
+        printf("Raw Thrills: video mode %dx%d\n", width, height);
+    }
+    return ret;
+}
+
+static int windowOpen(int width, int height, int fullscreen)
+{
+    static void (*glutFullScreen)(void);
+    int ret = windowOpenOrig(width, height, 0);
+
+    (void)fullscreen;
+    if (!glutFullScreen)
+        glutFullScreen = dlsym(RTLD_NEXT, "glutFullScreen");
+    if (ret >= 0 && getConfig()->fullscreen && glutFullScreen)
+        glutFullScreen();
+    return ret;
+}
+
+static void installModeTable(const RtGame *game)
+{
+    videoGame = game;
+    setModeOrig = rtTrampoline(game->setModeSymbol, game->setModePrologue);
+    if (!setModeOrig || rtDetour(game->setModeSymbol, setMode) != 0)
+        log_warn("Raw Thrills: cannot hook %s, keeping the game's resolution", game->setModeSymbol);
+    if (!game->windowOpenSymbol)
+        return;
+    windowOpenOrig = rtTrampoline(game->windowOpenSymbol, game->windowOpenPrologue);
+    if (!windowOpenOrig || rtDetour(game->windowOpenSymbol, windowOpen) != 0)
+        log_warn("Raw Thrills: cannot hook %s, the display mode may not be set", game->windowOpenSymbol);
+}
+
 void rtInstallVideo(const RtGame *game)
 {
     const char *symbol = game->parseArgsSymbol ? game->parseArgsSymbol : "ParseCommandLineArgs";
 
+    if (game->setModeSymbol)
+        installModeTable(game);
     if (!game->resolution || !game->parseArgsPrologue)
         return;
     videoGame = game;

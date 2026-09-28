@@ -52,6 +52,16 @@ typedef struct
     uint32_t source;
 } RtIoInput;
 
+// A light gun of a JAMMA board (g3 engine): evdev position (JVS analogue
+// channels) of a player, whose BUTTON_1 pulls the trigger and BUTTON_3
+// reloads (a shot off the screen), and the game's event for a shot.
+typedef struct
+{
+    int player;
+    int xChannel, yChannel;
+    uint16_t shotEvent;
+} RtJammaGun;
+
 // A directory the cabinet links elsewhere (symlinks that copies of the game
 // may have lost): paths relative to rootPath.
 typedef struct
@@ -59,6 +69,13 @@ typedef struct
     const char *from;
     const char *to;
 } RtPathAlias;
+
+// A function of a dump that does not export it: name -> address.
+typedef struct
+{
+    const char *name;
+    uint32_t address;
+} RtSymbol;
 
 // A game function replaced by one returning a constant (0 or 1).
 typedef struct
@@ -71,7 +88,7 @@ typedef struct
 typedef struct
 {
     uint32_t crc32;    // loader-side id (partial CRC of the code segment)
-    uint32_t fileCrc32; // CRC32 of the dumped ELF file, as the launcher sees it
+    uint32_t fileCrc32; // CRC32 of the dumped ELF file, as the launcher sees it (0: run as is)
 
     // Import tables to rebuild (see rtDump.c).
     uint32_t envelopeGot;
@@ -83,6 +100,10 @@ typedef struct
     size_t gameImportCount;
     const char *const *extraLibs; // libraries the game uses but does not list in DT_NEEDED
 
+    // Functions hooked by name that the dump does not export (terminated by
+    // a NULL name).
+    const RtSymbol *symbols;
+
     // HASP feature the game logs in to (HASP_DEFAULT_FID 0, or the legacy
     // program-number feature 0xffff0000); every other login fails.
     uint32_t haspFeature;
@@ -93,6 +114,12 @@ typedef struct
     uint32_t haspReadPatch;
     uint32_t haspWritePatch;
     uint32_t haspSessionInfoPatch;
+    // Directory, relative to the game directory, of recorded dongle answers
+    // (TeknoParrot's "hasp" folder), for games whose data needs the dongle's
+    // AES: hasp_encrypt/hasp_decrypt results, each in a file named by the
+    // first 16 bytes of the input in hex, and the dongle memory the game
+    // reads (hhl_mem.dmp). NULL: none.
+    const char *haspAnswers;
 
     // A library statically linked into the game whose dumped state is
     // unusable: the game's exported functions with this prefix are sent to
@@ -113,6 +140,9 @@ typedef struct
     const char *encryptedScripts;
     const char *decryptedScripts;
     const RtPathAlias *pathAliases;
+    // Cabinet directories outside rootPath: absolute path -> path relative
+    // to the game directory.
+    const RtPathAlias *rootAliases;
     const char *workDir; // working directory the game expects, relative to the game directory (NULL: itself)
 
     // Engine input (g5 engine). No GameInputMaps prologue: input hooks off.
@@ -153,6 +183,32 @@ typedef struct
     const char *orthoSymbol;
     size_t orthoPrologue;
     size_t parseArgsPrologue; // bytes of ParseCommandLineArgs to relocate into a trampoline
+
+    // Video mode (g3 engine): the mode is an entry of a table, selected by
+    // index (setMode), and the selected entry is pointed to by modePointer;
+    // its 16-bit width and height (+4, +6) are set from [Display]. The
+    // window is opened by windowOpen(width, height, fullscreen) with glut:
+    // its fullscreen switches the display mode, which is replaced by a
+    // window, made fullscreen with [Display] FULLSCREEN.
+    const char *setModeSymbol;
+    size_t setModePrologue;
+    uint32_t modePointer;
+    const char *windowOpenSymbol;
+    size_t windowOpenPrologue;
+
+    // JAMMA I/O board (g3 engine), not emulated: its poll (jammaPollSymbol),
+    // run each frame, is replaced by one posting the input events the board
+    // would have caused (postEventSymbol(event, data)). Switches: io is the
+    // event of a press, a release is the next one. Guns: the position event
+    // (gunPositionEvent) carries the gun's position in the board's
+    // gunWidth x gunHeight space, followed by the press or release events.
+    const char *jammaPollSymbol;
+    const char *postEventSymbol;
+    const RtIoInput *jammaSwitches;
+    const RtJammaGun *jammaGuns;
+    int jammaGunCount;
+    uint16_t gunPositionEvent;
+    int gunWidth, gunHeight;
 } RtGame;
 
 const RtGame *rtGetGame(uint32_t crc32);

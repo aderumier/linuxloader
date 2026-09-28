@@ -3,6 +3,7 @@
 #include "../hardware/lindbergh/jvs.h"
 #include "cruisnblast/cbImports.h"
 #include "galagaassault/gaImports.h"
+#include "walkingdead/twdImports.h"
 #include "jurassicpark/jpImports.h"
 
 // SDL 1.2 key codes (engine input ids of the keyboard).
@@ -258,6 +259,110 @@ static const RtIoInput gaRioSwitches[] = {
 // The RIO board is reported connected.
 static const RtStub gaStubs[] = {{"RIO_Connected", 0}, {NULL, 0}};
 
+// ---------------------------------------------------------------------------
+// The Walking Dead (g6 engine; the dump exports no game function). Found from
+// the HASP library's trace strings and by matching the dongle layer against
+// the g5 games.
+
+static const RtSymbol twdSymbols[] = {
+    {"hasp_login", 0x0837bbc0},
+    {"hasp_logout", 0x0837bc60},
+    {"hasp_read", 0x0837c9b8},
+    {"hasp_write", 0x0837ca84},
+    {"hasp_get_sessioninfo", 0x0837c740},
+    {"DongleEncrypt", 0x081d7200},
+    {"DongleDecrypt", 0x081d7380},
+    {NULL, 0},
+};
+
+// ---------------------------------------------------------------------------
+// Terminator Salvation (g3 engine), v01.25.00. Not a dump: a stripped but
+// normally linked binary, with the HASP HL library linked in statically.
+// Functions found from the game's call sites and the HASP API's argument
+// checks. The data files are encrypted with keys the dongle encrypts: its
+// answers are read from TeknoParrot's recording ("hasp" folder).
+
+static const RtSymbol t4Symbols[] = {
+    {"hasp_login", 0x083bbe60},
+    {"hasp_logout", 0x083bbe00},
+    {"hasp_read", 0x083bac80},
+    {"hasp_write", 0x083bad30},
+    {"hasp_get_sessioninfo", 0x083bae80},
+    {"hasp_free", 0x083baab0},
+    {"hasp_encrypt", 0x083bbd60},
+    {"hasp_decrypt", 0x083bbce0},
+    // Thread keeping the dongle busy with random encryptions.
+    {"DongleNoise", 0x080ac230},
+    // Forks a tracer: the game runs as a child the parent ptraces, so that
+    // no debugger can attach. Returns 1 in that child.
+    {"TracerGuard", 0x082f2eda},
+    // Boot-time check of the data files against their stored checksums.
+    // Game copies ship a re-encrypted, fixed eshaders/include/frag_shadmap.gls
+    // (the original does not compile on current drivers), which fails it
+    // and stops the game on "Game file errors detected".
+    {"DiagCheckAllFiles", 0x08190960},
+    // Online licensing: sets a record's lockout reason (offline too long,
+    // clock error, account delinquent, on too long without connection, not
+    // registered) from the operator and unit registration the network
+    // provides (op.aud, GameUnit.aud); a lockout stops the game on "Please
+    // stand by". Returns 1 when the record has none.
+    {"LicenseLockout", 0x081adad0},
+    // Input: the JAMMA board's poll, run each frame, and the input event
+    // queue (event, data).
+    {"JammaPoll", 0x08063630},
+    {"PostInputEvent", 0x08062320},
+    // Video: select the mode table entry, open the glut window.
+    {"SetVideoMode", 0x080c6fc0},
+    {"OpenWindow", 0x080c48b0},
+    {NULL, 0},
+};
+
+// JAMMA board inputs: the events of the board's switches (press; release is
+// the next event), from the game's switch table.
+enum
+{
+    T4_GUN0_GRENADE = 0x12,
+    T4_GUN0_TRIGGER = 0x16,
+    T4_GUN1_TRIGGER = 0x18,
+    T4_GUN1_GRENADE = 0x2a,
+    T4_START0 = 0x26,
+    T4_START1 = 0x2e,
+    T4_COIN0 = 0x30,
+    T4_COIN1 = 0x32,
+    T4_TEST = 0x34,
+    T4_SERVICE = 0x3c,
+    // Light gun board: a shot at the gun's position, and that position.
+    T4_GUN0_SHOT = 0x10,
+    T4_GUN1_SHOT = 0x28,
+    T4_GUN_POSITION = 0x45,
+};
+
+static const RtIoInput t4Switches[] = {
+    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_1},
+    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_TRIGGER, BUTTON_3}, // reload: a shot off the screen
+    {RT_IO_SWITCH, PLAYER_1, T4_GUN0_GRENADE, BUTTON_2},
+    {RT_IO_SWITCH, PLAYER_2, T4_GUN1_TRIGGER, BUTTON_1},
+    {RT_IO_SWITCH, PLAYER_2, T4_GUN1_TRIGGER, BUTTON_3},
+    {RT_IO_SWITCH, PLAYER_2, T4_GUN1_GRENADE, BUTTON_2},
+    {RT_IO_SWITCH, PLAYER_1, T4_START0, BUTTON_START},
+    {RT_IO_SWITCH, PLAYER_2, T4_START1, BUTTON_START},
+    {RT_IO_SWITCH, PLAYER_1, T4_SERVICE, BUTTON_SERVICE},
+    {RT_IO_SWITCH, PLAYER_2, T4_SERVICE, BUTTON_SERVICE},
+    {RT_IO_SWITCH, SYSTEM, T4_TEST, BUTTON_TEST},
+    {RT_IO_COIN, 0, T4_COIN0, 0},
+    {RT_IO_COIN, 1, T4_COIN1, 0},
+    {RT_IO_END, 0, 0, 0},
+};
+
+static const RtJammaGun t4Guns[] = {
+    {PLAYER_1, ANALOGUE_1, ANALOGUE_2, T4_GUN0_SHOT},
+    {PLAYER_2, ANALOGUE_3, ANALOGUE_4, T4_GUN1_SHOT},
+};
+
+static const RtStub t4Stubs[] = {{"TracerGuard", 1}, {"DiagCheckAllFiles", 0}, {"LicenseLockout", 1}, {NULL, 0}};
+
+static const RtPathAlias t4RootAliases[] = {{"/T4User", "T4User"}, {NULL, NULL}};
+
 static const RtGame rtGames[] = {
     {
         .crc32 = JURASSIC_PARK_RT,
@@ -360,6 +465,45 @@ static const RtGame rtGames[] = {
         .orthoPrologue = 6,
         .rootPath = "/pm",
     },
+    {
+        .crc32 = WALKING_DEAD_RT,
+        .fileCrc32 = 0x3fcf1642,
+        .envelopeGot = TWD_ENVELOPE_GOT,
+        .envelopeImports = twdEnvelopeImports,
+        .envelopeImportCount = sizeof(twdEnvelopeImports) / sizeof(twdEnvelopeImports[0]),
+        .envelopeSelfSlot = -1,
+        .gameImports = twdGameImports,
+        .gameImportCount = sizeof(twdGameImports) / sizeof(twdGameImports[0]),
+        .symbols = twdSymbols,
+        .haspFeature = 0xffff0000,
+        .haspMemoryFileId = 0xfff2,
+        .rootPath = "/pm",
+    },
+    {
+        .crc32 = TERMINATOR_SALVATION_RT,
+        .envelopeSelfSlot = -1,
+        .symbols = t4Symbols,
+        .haspFeature = 0xffff0000,
+        .haspMemoryFileId = 0xfff2,
+        .haspAnswers = "hasp",
+        .stubs = t4Stubs,
+        .rootPath = "/g3",
+        .rootAliases = t4RootAliases,
+        // Both "push %ebp; mov %esp,%ebp; sub $imm8,%esp"
+        .setModeSymbol = "SetVideoMode",
+        .setModePrologue = 6,
+        .modePointer = 0x088b5e70,
+        .windowOpenSymbol = "OpenWindow",
+        .windowOpenPrologue = 6,
+        .jammaPollSymbol = "JammaPoll",
+        .postEventSymbol = "PostInputEvent",
+        .jammaSwitches = t4Switches,
+        .jammaGuns = t4Guns,
+        .jammaGunCount = sizeof(t4Guns) / sizeof(t4Guns[0]),
+        .gunPositionEvent = T4_GUN_POSITION,
+        .gunWidth = 640,
+        .gunHeight = 480,
+    },
 };
 
 const RtGame *rtGetGame(uint32_t crc32)
@@ -373,7 +517,7 @@ const RtGame *rtGetGame(uint32_t crc32)
 const RtGame *rtGetGameByFileCrc(uint32_t fileCrc32)
 {
     for (size_t i = 0; i < sizeof(rtGames) / sizeof(rtGames[0]); i++)
-        if (rtGames[i].fileCrc32 == fileCrc32)
+        if (rtGames[i].fileCrc32 && rtGames[i].fileCrc32 == fileCrc32)
             return &rtGames[i];
     return NULL;
 }

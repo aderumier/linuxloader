@@ -36,6 +36,11 @@ int isRawThrillsGame(void)
     return rtCurrentGame() != NULL;
 }
 
+const char *rtGameDir(void)
+{
+    return gameDir;
+}
+
 // ---------------------------------------------------------------------------
 // Filesystem
 
@@ -81,6 +86,15 @@ const char *rtRedirectPath(const char *path, char *buf, size_t size)
             }
         }
         return join(buf, size, gameDir, rest);
+    }
+    for (const RtPathAlias *alias = g->rootAliases; alias && alias->from; alias++)
+    {
+        size_t fromLen = strlen(alias->from);
+        if (!strncmp(path, alias->from, fromLen) && (path[fromLen] == '/' || path[fromLen] == '\0'))
+        {
+            snprintf(buf, size, "%s/%s%s", gameDir, alias->to, path + fromLen);
+            return buf;
+        }
     }
     if (!strncmp(path, "/mnt/usbflash", 13))
         return join(buf, size, usbDir, path + 13);
@@ -248,6 +262,7 @@ int rtInit(void)
     rtInstallDongle(g);
     rtInstallIo(g);
     rtInstallInput(g);
+    rtInstallJamma(g);
     rtInstallVideo(g);
     return 0;
 }

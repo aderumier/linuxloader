@@ -189,7 +189,7 @@ static int coinPulse(int slot, int count)
     return 0;
 }
 
-static int ioSwitchState(const RtIoInput *in, JVSIO *io)
+int rtIoSwitchState(const RtIoInput *in, JVSIO *io)
 {
     switch (in->type)
     {
@@ -231,7 +231,7 @@ static int ioLoopHook(int dt)
         int held = 0;
         for (const RtIoInput *other = in; other->type != RT_IO_END; other++)
             if (other->io == in->io && other->type != RT_IO_ANALOG && other->type != RT_IO_ANALOG_INVERTED)
-                held |= ioSwitchState(other, io);
+                held |= rtIoSwitchState(other, io);
         ioDigitalSet(in->io, dt, held);
     }
     rangesSet = 1;
@@ -279,7 +279,7 @@ static int rioSwState(int sw)
         return 0;
     for (const RtIoInput *in = currentGame->rioSwitches; in->type != RT_IO_END; in++)
         if (in->io == sw)
-            held |= ioSwitchState(in, io);
+            held |= rtIoSwitchState(in, io);
     if (held && !rioHeld[sw])
         rioCount[sw]++;
     rioHeld[sw] = held;
