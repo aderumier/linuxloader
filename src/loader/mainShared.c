@@ -71,6 +71,7 @@ char *games[] = {"a.elf",
                  "vf5",
                  "vsg",
                  "vt3",
+                 "game", // Raw Thrills (Jurassic Park)
                  "vt3_Lindbergh",
                  "END"};
 
