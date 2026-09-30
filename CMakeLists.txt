@@ -105,6 +105,22 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
     target_link_libraries(linuxloader ${LINUX_LOADER_SO_LINKER_FLAGS} xdiff minhook dl)
     target_compile_options(linuxloader PRIVATE ${LINUX_LOADER_SO_C_FLAGS})
 
+    # Halo: Fireteam Raven is a 64-bit Raw Thrills g7 executable.  It needs
+    # its own preload library, separate from the 32-bit Lindbergh loader.
+    # It shares the loader's ini parser and gun border, and reads the same
+    # linuxloader.ini.
+    add_library(halo_rt SHARED
+        src/loader/rawthrills/halo/halo_rt.c
+        src/loader/config/iniParser.c
+        src/loader/graphics/border.c
+        src/loader/graphics/borderFrame.c
+        src/loader/graphics/frameScale.c
+        src/glad/src/gl.c)
+    set_target_properties(halo_rt PROPERTIES PREFIX "" OUTPUT_NAME "halo_rt")
+    target_compile_options(halo_rt PRIVATE -m64 -fPIC -Wall -Wextra)
+    target_link_options(halo_rt PRIVATE -m64)
+    target_link_libraries(halo_rt PRIVATE dl)
+
 elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
 
     enable_language(RC)
