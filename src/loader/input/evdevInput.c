@@ -1440,28 +1440,18 @@ void *controllerThread(void *_args)
                                 }
                             }
 
-                            if (channel == ANALOGUE_1 || channel == ANALOGUE_2)
+                            // Ghost Squad Evolution reloads by pointing off the screen: its
+                            // guns' reload is held while they are off it. The other games
+                            // keep the reload button the player holds (a gun's aim moving
+                            // released it, player 2's with player 1's aim).
+                            if (gId == GHOST_SQUAD_EVOLUTION_SBNJ && (channel == ANALOGUE_1 || channel == ANALOGUE_2))
                             {
                                 args->controller->lastAnalogueValue[channel] = scaled;
 
                                 double x_pos = (channel == ANALOGUE_1) ? scaled : args->controller->lastAnalogueValue[ANALOGUE_1];
                                 double y_pos = (channel == ANALOGUE_2) ? scaled : args->controller->lastAnalogueValue[ANALOGUE_2];
 
-                                if (x_pos <= 0.01 || x_pos >= 0.99 || y_pos <= 0.01 || y_pos >= 0.99)
-                                {
-                                    // log_info("Off-screen detected - X: %f, Y: %f", x_pos, y_pos);
-                                    switch (gId)
-                                    {
-                                        case GHOST_SQUAD_EVOLUTION_SBNJ:
-                                            // log_info("GSE: Triggering reload via BUTTON_2");
-                                            setSwitch(1, BUTTON_2, 1);
-                                            break;
-                                    }
-                                }
-                                else
-                                {
-                                    setSwitch(1, BUTTON_2, 0);
-                                }
+                                setSwitch(1, BUTTON_2, x_pos <= 0.01 || x_pos >= 0.99 || y_pos <= 0.01 || y_pos >= 0.99);
                             }
 
                             if (channel == ANALOGUE_1 && (gGrp == GROUP_ID4_EXP || gGrp == GROUP_ID4_JAP || gGrp == GROUP_ID5))
@@ -1474,20 +1464,6 @@ void *controllerThread(void *_args)
                                 double x_pos = (channel == ANALOGUE_1) ? scaled : args->controller->lastAnalogueValue[ANALOGUE_1];
                                 double y_pos = (channel == ANALOGUE_2) ? scaled : args->controller->lastAnalogueValue[ANALOGUE_2];
 
-                                if (x_pos <= 0.01 || x_pos >= 0.99 || y_pos <= 0.01 || y_pos >= 0.99)
-                                {
-                                    switch (gId)
-                                    {
-                                        case GHOST_SQUAD_EVOLUTION_SBNJ:
-                                            setSwitch(2, BUTTON_2, 1);
-                                            break;
-                                    }
-                                }
-                                else
-                                {
-                                    setSwitch(2, BUTTON_2, 0);
-                                }
-
                                 updateCrosshairPosition(0, x_pos, y_pos);
                             }
 
@@ -1497,6 +1473,9 @@ void *controllerThread(void *_args)
 
                                 double x_pos = (channel == ANALOGUE_3) ? scaled : args->controller->lastAnalogueValue[ANALOGUE_3];
                                 double y_pos = (channel == ANALOGUE_4) ? scaled : args->controller->lastAnalogueValue[ANALOGUE_4];
+
+                                if (gId == GHOST_SQUAD_EVOLUTION_SBNJ)
+                                    setSwitch(2, BUTTON_2, x_pos <= 0.01 || x_pos >= 0.99 || y_pos <= 0.01 || y_pos >= 0.99);
 
                                 updateCrosshairPosition(1, x_pos, y_pos);
                             }
