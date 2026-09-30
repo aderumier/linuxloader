@@ -6,6 +6,9 @@
 #endif
 #undef __x86_64__
 
+#ifdef __linux__
+#include "rawthrills/rtGame.h"
+#endif
 #include <ctype.h>
 #include <libgen.h>
 #include <limits.h>
@@ -1183,6 +1186,10 @@ int parseArgs(int argc, char *argv[], char *command, char *originalDir, char *ga
     }
 
     isCleanElf(command);
+#ifdef __linux__
+    // Raw Thrills dumps run from a patched copy (see rawthrills/rtLaunch.c).
+    rtPrepareCommand(command, MAX_PATH_LENGTH, elfCrc, resolvedConfigPath);
+#endif
 
 #ifdef __linux__
     setEnvironmentVariables(libPath, originalDir, targetedGameDir, zink, nvidia, libraryPath, extConfigPath, extControlsPath,
