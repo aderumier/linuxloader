@@ -13,6 +13,8 @@
 // Windows API
 #ifdef   __linux__
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#include <unistd.h>
 #include <GL/glx.h>
 #include <dlfcn.h>
 #include <X11/extensions/xf86vmode.h> 
@@ -576,7 +578,19 @@ Window XCreateWindow(Display *display, Window parent, int x, int y, unsigned int
                              XSetWindowAttributes *attributes) = dlsym(RTLD_NEXT, "XCreateWindow");
 
     if ((gettingGPUVendor || creatingWindow))
+    {
         window = _XCreateWindow(display, parent, x, y, width, height, border_width, depth, class, visual, valueMask, attributes);
+        // The window is this process's (_NET_WM_PID), as SDL marks its own:
+        // the quit watch (Esc, Alt+F4) only acts on a window so marked, and
+        // the games making their own X11 window (Dead Heat Riders, Maximum
+        // Heat 3D, Tank! Tank! Tank!) did not mark theirs.
+        if (window)
+        {
+            long pid = getpid();
+            XChangeProperty(display, window, XInternAtom(display, "_NET_WM_PID", False), XA_CARDINAL, 32,
+                            PropModeReplace, (unsigned char *)&pid, 1);
+        }
+    }
     else
         window = x11Window;
 
@@ -590,13 +604,32 @@ void XSetWMProperties(Display *display, Window w, XTextProperty *window_name, XT
     return;
 }
 
+// The calls below are kept from the game while the loader's SDL window stands
+// in for its own. A game the loader gives no SDL window (the Namco ES1 games
+// with their own X11/GLX window: gettingGPUVendor stays set, see init.c) gets
+// the real ones, as XOpenDisplay and XCreateWindow above.
+static bool ownXWindow(void)
+{
+    return gettingGPUVendor || creatingWindow;
+}
+
 int XMapWindow(Display *display, Window window)
 {
+    if (ownXWindow())
+    {
+        int (*_XMapWindow)(Display *, Window) = dlsym(RTLD_NEXT, "XMapWindow");
+        return _XMapWindow(display, window);
+    }
     return 0;
 }
 
 int XPending(Display *display)
 {
+    if (ownXWindow())
+    {
+        int (*_XPending)(Display *) = dlsym(RTLD_NEXT, "XPending");
+        return _XPending(display);
+    }
     return 0;
 }
 
@@ -632,8 +665,16 @@ Bool XF86VidModeGetViewPort(Display *display, int screen, int *x_return, int *y_
     return 0;
 }
 
+// A game with its own window (Tank! Tank! Tank!) paces its frames on the
+// refresh rate it reads from the mode line: the real one.
 Bool XF86VidModeGetModeLine(Display *display, int screen, int *dotclock_return, XF86VidModeModeLine *modeline)
 {
+    if (ownXWindow())
+    {
+        Bool (*real)(Display *, int, int *, XF86VidModeModeLine *) = dlsym(RTLD_NEXT, "XF86VidModeGetModeLine");
+        if (real && real(display, screen, dotclock_return, modeline))
+            return 1;
+    }
     return 0;
 }
 

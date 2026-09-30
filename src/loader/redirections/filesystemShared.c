@@ -378,10 +378,12 @@ FILE *sharedFopen(const char *restrict pathname, const char *restrict mode)
         }
     }
 
+    // Its lines come from sharedFgets; the stream itself is empty, so that a
+    // reader looping on feof() (Namco N2's Alchemy) sees the end after them.
     if (strcmp(pathname, "/proc/cpuinfo") == 0)
     {
         fileRead[CPUINFO] = 0;
-        fileHooks[CPUINFO] = _fopen(HOOK_FILE_NAME, mode);
+        fileHooks[CPUINFO] = _fopen("/dev/null", mode);
         return fileHooks[CPUINFO];
     }
 
@@ -712,7 +714,7 @@ char *sharedFgets(char *str, int n, FILE *stream)
             strcpy(contents[3], "model name	: Intel(R) Celeron(R) CPU 2.80GHz");
 
         if (fileRead[CPUINFO] == 4)
-            return NULL;
+            return _fgets(str, n, stream); // NULL, and the stream at its end
 
         strcpy(str, contents[fileRead[CPUINFO]++]);
         return str;

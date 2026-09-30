@@ -337,6 +337,9 @@ typedef struct
     float whiteBorderPercentage;
     float blackBorderPercentage;
     int borderEnabled;
+    int rotateVertical;
+    char bezel[MAX_PATH_LENGTH];
+    int bezelEnabled; // -1: auto, when the image exists
     int enableCrosshairs;
     int gsevoCrosshairAlwaysOn;
     int gsevoCrosshairAlwaysOff;

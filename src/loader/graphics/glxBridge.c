@@ -489,6 +489,15 @@ extern Display *x11Display;
 
 void glXSwapBuffers(Display *dpy, GLXDrawable drawable)
 {
+    if (!getSDLWindow())
+    {
+        // windowX11 games (e.g. Namco ES1 with their own X window) manage their
+        // own GLX context and swap; pass straight through to the real GLX.
+        void (*_glXSwapBuffers)(Display *, GLXDrawable) = dlsym(RTLD_NEXT, "glXSwapBuffers");
+        if (_glXSwapBuffers)
+            _glXSwapBuffers(dpy, drawable);
+        return;
+    }
     bridgeGlxSwapBuffers(dpy, drawable);
 }
 
@@ -501,11 +510,51 @@ GLXContext glXCreateContext(Display *dpy, XVisualInfo *vis, GLXContext shareList
     GLXContext ctx = NULL;
     if (ctxCnt == 0)
         ctx = (GLXContext)getSDLContext();
-    else
+    if (!ctx)
+        // No SDL-managed context: windowX11 games create their own X window and
+        // GLX context, so use the real GLX implementation instead.
         ctx = _glXCreateContext(dpy, vis, shareList, direct);
 
     ctxCnt++;
     return ctx;
+}
+
+// windowX11 games manage their own window and context: the loader's GL
+// wrappers (glEnable, glBindTexture, ...) call through glad's entry points,
+// which need loading once the game's context is current (normally done after
+// the SDL window).
+static void ownContextCurrent(void)
+{
+    static int glLoaded;
+    if (glLoaded || getSDLWindow())
+        return;
+    GLADloadfunc getProcAddress = (GLADloadfunc)dlsym(RTLD_DEFAULT, "glXGetProcAddressARB");
+    glLoaded = 1;
+    if (!getProcAddress || !gladLoadGL(getProcAddress))
+        log_error("windowX11: cannot load the GL entry points");
+}
+
+int glXMakeCurrent(Display *dpy, GLXDrawable drawable, GLXContext ctx)
+{
+    int (*_glXMakeCurrent)(Display *, GLXDrawable, GLXContext) =
+        dlsym(RTLD_NEXT, "glXMakeCurrent");
+    int result = _glXMakeCurrent(dpy, drawable, ctx);
+
+    if (result)
+        ownContextCurrent();
+    return result;
+}
+
+// The GLX 1.3 way (Tank! Tank! Tank!).
+Bool glXMakeContextCurrent(Display *dpy, GLXDrawable draw, GLXDrawable read, GLXContext ctx)
+{
+    Bool (*_glXMakeContextCurrent)(Display *, GLXDrawable, GLXDrawable, GLXContext) =
+        dlsym(RTLD_NEXT, "glXMakeContextCurrent");
+    Bool result = _glXMakeContextCurrent(dpy, draw, read, ctx);
+
+    if (result)
+        ownContextCurrent();
+    return result;
 }
 
 GLXFBConfig *glXChooseFBConfig(Display *dpy, int screen, const int *attrib_list, int *nelements)
@@ -588,6 +637,11 @@ GLXContext glXCreateContextWithConfigSGIX(Display *dpy, GLXFBConfigSGIX config, 
 
 Display *glXGetCurrentDisplay(void)
 {
+    if (!getSDLWindow())
+    {
+        Display *(*real)(void) = dlsym(RTLD_NEXT, "glXGetCurrentDisplay");
+        return real ? real() : NULL;
+    }
     return x11Display;
 }
 

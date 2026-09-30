@@ -14,6 +14,7 @@
 #include <linux/input.h>
 #include <unistd.h>
 #include <math.h>
+#include <signal.h>
 
 #include "evdevInput.h"
 #include "../config/config.h"
@@ -27,6 +28,35 @@ extern uint32_t gId;
 extern int gGrp;
 
 int jvsBits = 10;
+
+// A switch can have several sources (a d-pad direction and the stick's, see
+// mappingIs()), on one pad or several, each read by its own thread: it is
+// held while any of them holds it. A source reports its changes only (a
+// stick resting near the middle keeps saying "released"), which are counted
+// per switch.
+static int switchHolders[PLAYER_4 + 1][32];
+static pthread_mutex_t switchHoldersLock = PTHREAD_MUTEX_INITIALIZER;
+
+static void sourceSwitch(int player, int channel, int *held, int value)
+{
+    value = value != 0;
+    if (value == *held)
+        return;
+    *held = value;
+    // A switch is one bit of its player's switches.
+    if (player < SYSTEM || player > PLAYER_4 || channel <= 0 || (channel & (channel - 1)))
+    {
+        setSwitch(player, channel, value);
+        return;
+    }
+    int bit = __builtin_ctz((unsigned int)channel);
+    pthread_mutex_lock(&switchHoldersLock);
+    switchHolders[player][bit] += value ? 1 : -1;
+    if (switchHolders[player][bit] < 0)
+        switchHolders[player][bit] = 0;
+    setSwitch(player, channel, switchHolders[player][bit] > 0);
+    pthread_mutex_unlock(&switchHoldersLock);
+}
 
 #define BITS_PER_LONG (sizeof(long) * 8)
 #define NBITS(x) ((((x) - 1) / BITS_PER_LONG) + 1)
@@ -856,6 +886,31 @@ typedef struct
     struct ff_effect effect;
 } FFBThreadData;
 
+Controller *evdevAxisController(Controllers *controllers, const char *name)
+{
+    for (int i = 0; i < controllers->count; i++)
+    {
+        Controller *c = &controllers->controller[i];
+        if (!c->inUse)
+            continue;
+        for (int code = 0; code < ABS_CNT; code++)
+            if (c->absTriggers[code].enabled && strcmp(c->absTriggers[code].name, name) == 0)
+                return c;
+    }
+    return NULL;
+}
+
+int createQuietThread(pthread_t *thread, void *(*start)(void *), void *arg)
+{
+    sigset_t all, previous;
+
+    sigfillset(&all);
+    pthread_sigmask(SIG_SETMASK, &all, &previous);
+    int r = pthread_create(thread, NULL, start, arg);
+    pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    return r;
+}
+
 void *ffbEffectThread(void *arg)
 {
     FFBThreadData *data = (FFBThreadData *)arg;
@@ -958,7 +1013,7 @@ void initFFB(Controller *controller, uint16_t weak_magnitude, uint16_t strong_ma
 
     // Start the thread
     pthread_t thread;
-    if (pthread_create(&thread, NULL, ffbEffectThread, threadData) != 0)
+    if (createQuietThread(&thread, ffbEffectThread, threadData) != 0)
     {
         perror("Failed to create FFB thread");
         free(threadData);
@@ -1045,6 +1100,20 @@ ControllerStatus loadEvdevControllers(Controllers *controllers)
         memset(bit, 0, sizeof(bit));
         ioctl(controller, EVIOCGBIT(0, EV_MAX), bit[0]);
 
+        // Devices declaring hundreds of keys (e.g. virtual ones made for
+        // Wiimote guns or by gamescope) exceed the inputs kept: leave room for
+        // their axes (4 inputs each: value, MIN, MAX, SHAKE), which guns aim with.
+        int keyLimit = MAX_INPUTS;
+        if (test_bit(EV_ABS, bit[0]))
+        {
+            ioctl(controller, EVIOCGBIT(EV_ABS, KEY_MAX), bit[EV_ABS]);
+            for (int code = 0; code < ABS_CNT; code++)
+                if (test_bit(code, bit[EV_ABS]))
+                    keyLimit -= 4;
+            if (keyLimit < 0)
+                keyLimit = 0;
+        }
+
         if (test_bit(EV_KEY, bit[0]))
         {
             ioctl(controller, EVIOCGBIT(EV_KEY, KEY_MAX), bit[EV_KEY]);
@@ -1052,7 +1121,7 @@ ControllerStatus loadEvdevControllers(Controllers *controllers)
             {
                 if (test_bit(code, bit[EV_KEY]))
                 {
-                    if (controllers->controller[i].inputCount >= MAX_INPUTS)
+                    if (controllers->controller[i].inputCount >= keyLimit)
                     { // the number of input is limited
                         fprintf(stderr, "warning, maximum number of inputs reached !\n");
                         break;
@@ -1076,6 +1145,28 @@ ControllerStatus loadEvdevControllers(Controllers *controllers)
             }
         }
 
+        // A mouse's X and Y (path:REL:0 and :1), aiming like a gun's axes.
+        if (test_bit(EV_REL, bit[0]))
+        {
+            ioctl(controller, EVIOCGBIT(EV_REL, KEY_MAX), bit[EV_REL]);
+            for (int code = REL_X; code <= REL_Y; code++)
+            {
+                if (!test_bit(code, bit[EV_REL]) || controllers->controller[i].inputCount >= MAX_INPUTS)
+                    continue;
+                controllers->controller[i].enabled = 1;
+                ControllerInput *controllerInput = &controllers->controller[i].inputs[controllers->controller[i].inputCount++];
+                controllerInput->evType = EV_REL;
+                controllerInput->evCode = code;
+                controllerInput->specialFunction = NO_SPECIAL_FUNCTION;
+                strncpy(controllerInput->inputName, controllers->controller[i].name, SIZE);
+                strcat(controllerInput->inputName, "_");
+                strcat(controllerInput->inputName, codename(EV_REL, code));
+                normaliseName(controllerInput->inputName);
+                snprintf(controllerInput->inputTechName, SIZE, "%s:REL:%i", controllers->controller[i].path, code);
+                strncpy(controllerInput->inputTechNegName, "-", SIZE); // unassignable value
+            }
+        }
+
         if (test_bit(EV_ABS, bit[0]))
         {
             ioctl(controller, EVIOCGBIT(EV_ABS, KEY_MAX), bit[EV_ABS]);
@@ -1083,6 +1174,12 @@ ControllerStatus loadEvdevControllers(Controllers *controllers)
             {
                 if (test_bit(code, bit[EV_ABS]))
                 {
+                    // An axis takes 4 inputs (value, MIN, MAX, SHAKE).
+                    if (controllers->controller[i].inputCount + 4 > MAX_INPUTS)
+                    {
+                        fprintf(stderr, "warning, maximum number of inputs reached !\n");
+                        break;
+                    }
                     controllers->controller[i].enabled = 1;
                     ControllerInput *controllerInput = &controllers->controller[i].inputs[controllers->controller[i].inputCount++];
                     controllerInput->evType = EV_ABS;
@@ -1292,8 +1389,8 @@ void *controllerThread(void *_args)
                             incrementCoin(args->controller->keyTriggers[event.code].player, 1);
                     }
                     else
-                        setSwitch(args->controller->keyTriggers[event.code].player, args->controller->keyTriggers[event.code].channel,
-                                  event.value == 0 ? 0 : 1);
+                        sourceSwitch(args->controller->keyTriggers[event.code].player, args->controller->keyTriggers[event.code].channel,
+                                     &args->controller->keyTriggers[event.code].held, event.value != 0);
                 }
                 break;
 
@@ -1408,8 +1505,8 @@ void *controllerThread(void *_args)
                         }
                         else
                         {
-                            setSwitch(args->controller->absTriggers[event.code].player, args->controller->absTriggers[event.code].channel,
-                                      scaled < 0.8 ? 0 : 1);
+                            sourceSwitch(args->controller->absTriggers[event.code].player, args->controller->absTriggers[event.code].channel,
+                                         &args->controller->absTriggers[event.code].held, scaled >= 0.8);
                         }
                     }
 
@@ -1425,8 +1522,9 @@ void *controllerThread(void *_args)
                             }
                             else
                             {
-                                setSwitch(args->controller->absTriggers[event.code].minPlayer,
-                                          args->controller->absTriggers[event.code].minChannel, scaled < 0.2 ? 1 : 0);
+                                sourceSwitch(args->controller->absTriggers[event.code].minPlayer,
+                                             args->controller->absTriggers[event.code].minChannel,
+                                             &args->controller->absTriggers[event.code].minHeld, scaled < 0.2);
                             }
                         }
                     }
@@ -1443,8 +1541,9 @@ void *controllerThread(void *_args)
                             }
                             else
                             {
-                                setSwitch(args->controller->absTriggers[event.code].maxPlayer,
-                                          args->controller->absTriggers[event.code].maxChannel, scaled > 0.8 ? 1 : 0);
+                                sourceSwitch(args->controller->absTriggers[event.code].maxPlayer,
+                                             args->controller->absTriggers[event.code].maxChannel,
+                                             &args->controller->absTriggers[event.code].maxHeld, scaled > 0.8);
                             }
                         }
                     }
@@ -1468,6 +1567,23 @@ void *controllerThread(void *_args)
                 }
                 break;
 
+                // A mouse aiming: a count moves the position by a pixel of
+                // the game's screen, and it stays on the screen.
+                case EV_REL:
+                {
+                    if (event.code >= REL_CNT || !args->controller->relTriggers[event.code].enabled ||
+                        !args->controller->relTriggers[event.code].isAnalogue)
+                        continue;
+                    int span = event.code == REL_X ? getConfig()->width : getConfig()->height;
+                    if (span <= 0)
+                        span = event.code == REL_X ? 1280 : 720;
+                    double position = args->controller->relPosition[event.code] + (double)event.value / span;
+                    position = position < 0.0 ? 0.0 : position > 1.0 ? 1.0 : position;
+                    args->controller->relPosition[event.code] = position;
+                    setAnalogue(args->controller->relTriggers[event.code].channel, position * (pow(2, jvsBits) - 1));
+                }
+                break;
+
                 default:
                     break;
             }
@@ -1480,102 +1596,125 @@ void *controllerThread(void *_args)
     return NULL;
 }
 
+// A config entry lists one input, or several separated by commas (a d-pad
+// direction and the stick's, "a,b"): whether input is one of them.
+static int mappingIs(const char *input, const char *entry)
+{
+    size_t length = strlen(input);
+
+    while (*entry)
+    {
+        while (*entry == ' ')
+            entry++;
+        const char *end = strchr(entry, ',');
+        size_t entryLength = end ? (size_t)(end - entry) : strlen(entry);
+        while (entryLength && entry[entryLength - 1] == ' ')
+            entryLength--;
+        if (entryLength == length && length && !strncmp(entry, input, length))
+            return 1;
+        if (!end)
+            break;
+        entry = end + 1;
+    }
+    return 0;
+}
+
 char *getMapping(char *mapping)
 {
     EmulatorConfig *config = getConfig();
 
     // Test button
-    if (strcmp(mapping, config->arcadeInputs.test) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.test))
         return "TEST_BUTTON";
-    if (strcmp(mapping, config->arcadeInputs.player1_coin) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_coin))
         return "PLAYER_1_COIN";
-    if (strcmp(mapping, config->arcadeInputs.player2_coin) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_coin))
         return "PLAYER_2_COIN";
 
     // Player 1 controls
-    if (strcmp(mapping, config->arcadeInputs.player1_button_start) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_start))
         return "PLAYER_1_BUTTON_START";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_service) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_service))
         return "PLAYER_1_BUTTON_SERVICE";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_up) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_up))
         return "PLAYER_1_BUTTON_UP";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_down) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_down))
         return "PLAYER_1_BUTTON_DOWN";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_left) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_left))
         return "PLAYER_1_BUTTON_LEFT";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_right) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_right))
         return "PLAYER_1_BUTTON_RIGHT";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_1) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_1))
         return "PLAYER_1_BUTTON_1";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_2) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_2))
         return "PLAYER_1_BUTTON_2";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_3) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_3))
         return "PLAYER_1_BUTTON_3";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_4) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_4))
         return "PLAYER_1_BUTTON_4";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_5) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_5))
         return "PLAYER_1_BUTTON_5";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_6) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_6))
         return "PLAYER_1_BUTTON_6";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_7) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_7))
         return "PLAYER_1_BUTTON_7";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_8) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_8))
         return "PLAYER_1_BUTTON_8";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_9) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_9))
         return "PLAYER_1_BUTTON_9";
-    if (strcmp(mapping, config->arcadeInputs.player1_button_10) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player1_button_10))
         return "PLAYER_1_BUTTON_10";
 
     // Player 2 controls
-    if (strcmp(mapping, config->arcadeInputs.player2_button_start) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_start))
         return "PLAYER_2_BUTTON_START";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_service) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_service))
         return "PLAYER_2_BUTTON_SERVICE";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_up) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_up))
         return "PLAYER_2_BUTTON_UP";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_down) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_down))
         return "PLAYER_2_BUTTON_DOWN";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_left) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_left))
         return "PLAYER_2_BUTTON_LEFT";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_right) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_right))
         return "PLAYER_2_BUTTON_RIGHT";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_1) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_1))
         return "PLAYER_2_BUTTON_1";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_2) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_2))
         return "PLAYER_2_BUTTON_2";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_3) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_3))
         return "PLAYER_2_BUTTON_3";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_4) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_4))
         return "PLAYER_2_BUTTON_4";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_5) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_5))
         return "PLAYER_2_BUTTON_5";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_6) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_6))
         return "PLAYER_2_BUTTON_6";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_7) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_7))
         return "PLAYER_2_BUTTON_7";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_8) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_8))
         return "PLAYER_2_BUTTON_8";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_9) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_9))
         return "PLAYER_2_BUTTON_9";
-    if (strcmp(mapping, config->arcadeInputs.player2_button_10) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.player2_button_10))
         return "PLAYER_2_BUTTON_10";
 
     // Analogue inputs
-    if (strcmp(mapping, config->arcadeInputs.analogue_1) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_1))
         return "ANALOGUE_1";
-    if (strcmp(mapping, config->arcadeInputs.analogue_2) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_2))
         return "ANALOGUE_2";
-    if (strcmp(mapping, config->arcadeInputs.analogue_3) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_3))
         return "ANALOGUE_3";
-    if (strcmp(mapping, config->arcadeInputs.analogue_4) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_4))
         return "ANALOGUE_4";
-    if (strcmp(mapping, config->arcadeInputs.analogue_5) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_5))
         return "ANALOGUE_5";
-    if (strcmp(mapping, config->arcadeInputs.analogue_6) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_6))
         return "ANALOGUE_6";
-    if (strcmp(mapping, config->arcadeInputs.analogue_7) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_7))
         return "ANALOGUE_7";
-    if (strcmp(mapping, config->arcadeInputs.analogue_8) == 0)
+    if (mappingIs(mapping, config->arcadeInputs.analogue_8))
         return "ANALOGUE_8";
 
     return NULL;
@@ -1615,6 +1754,9 @@ ControllerStatus startControllerThreads(Controllers *controllers)
             controllers->controller[i].absTriggers[j].shakeEnabled = 0;
             controllers->controller[i].absTriggers[j].isNeg = 0;
             controllers->controller[i].absTriggers[j].isAnalogue = 1;
+            controllers->controller[i].absTriggers[j].held = 0;
+            controllers->controller[i].absTriggers[j].minHeld = 0;
+            controllers->controller[i].absTriggers[j].maxHeld = 0;
         }
 
         for (int j = 0; j < KEY_MAX; j++)
@@ -1624,6 +1766,7 @@ ControllerStatus startControllerThreads(Controllers *controllers)
             controllers->controller[i].keyTriggers[j].isAnalogue = 0;
             controllers->controller[i].keyTriggers[j].isCoin = 0;
             controllers->controller[i].keyTriggers[j].isExitGame = 0;
+            controllers->controller[i].keyTriggers[j].held = 0;
         }
 
         controllers->controller[i].numExitCombos = 0;
@@ -1773,6 +1916,18 @@ ControllerStatus startControllerThreads(Controllers *controllers)
                 }
                 break;
 
+                case EV_REL:
+                {
+                    ArcadeInput *trigger = &controllers->controller[i].relTriggers[controllers->controller[i].inputs[j].evCode];
+                    trigger->enabled = 1;
+                    trigger->channel = input.channel;
+                    strncpy(trigger->name, input.name, SIZE);
+                    trigger->player = input.player;
+                    trigger->isAnalogue = strstr(input.name, "ANALOGUE") != NULL;
+                    controllers->controller[i].relPosition[controllers->controller[i].inputs[j].evCode] = 0.5;
+                }
+                break;
+
                 case EV_KEY:
                 {
                     controllers->controller[i].keyTriggers[controllers->controller[i].inputs[j].evCode].enabled = 1;
@@ -1812,6 +1967,9 @@ ControllerStatus startControllerThreads(Controllers *controllers)
         for (int j = 0; j < ABS_MAX; j++)
             if (controllers->controller[i].absTriggers[j].enabled)
                 controllerHasInputsEnabled = 1;
+        for (int j = 0; j < REL_CNT; j++)
+            if (controllers->controller[i].relTriggers[j].enabled)
+                controllerHasInputsEnabled = 1;
 
         if (!controllerHasInputsEnabled)
             continue;
@@ -1825,7 +1983,7 @@ ControllerStatus startControllerThreads(Controllers *controllers)
         memcpy(args->analogue_deadzone_middle, config->arcadeInputs.analogue_deadzone_middle,
                sizeof(config->arcadeInputs.analogue_deadzone_middle));
         memcpy(args->analogue_deadzone_end, config->arcadeInputs.analogue_deadzone_end, sizeof(config->arcadeInputs.analogue_deadzone_end));
-        pthread_create(&controllers->thread[controllers->threadIndex++], NULL, controllerThread, args);
+        createQuietThread(&controllers->thread[controllers->threadIndex++], controllerThread, args);
         controllers->controller[i].inUse = 1;
     }
 
