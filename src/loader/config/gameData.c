@@ -22,6 +22,7 @@ static const GameData gameData[] = {
     {TANKTANKTANK_ES1, "Tank! Tank! Tank!", "tanktanktank", "Namco ES1", "TANK100", "2009", "768x1360", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {DEADHEAT_ES1, "Dead Heat", "deadheat", "Namco ES1", "USDRIVE", "2011", "1360x768", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {MAXIMUMHEAT3D_ES1, "Maximum Heat 3D", "maximumheat3d", "Namco ES1", "USDRIVE", "2011", "1360x768", WORKING, NAMCO_ES1_JAMMA, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
+    {WMMT3DXPLUS_N2, "Wangan Midnight Maximum Tune 3DX+", "wmmt3dxp", "Namco N2", "W3P100", "2010", "640x480", NOT_WORKING, NAMCO_FCA_1, DRIVING, 640, 480, -1, 0, 0, 0, 0, 0, 0, RED},
     {DHRIDERS_ES1, "Dead Heat Riders", "dhriders", "Namco ES1", "DHR100", "2013", "1360x768", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {AFTER_BURNER_CLIMAX_SBLR, "After Burner Climax", "abc", "DVP-0009", "SBLR", "2006", "640x480", WORKING, SEGA_TYPE_1, FLYING, 640, 480, GROUP_ABC, 0, 0, 0, 0, 0, 0, YELLOW},
     {AFTER_BURNER_CLIMAX_SBLR_REVA, "After Burner Climax Rev A", "abc-rev-a", "DVP-0009A", "SBLR", "2006", "640x480", WORKING, SEGA_TYPE_1, FLYING, 640, 480, GROUP_ABC, 0, 0, 0, 0, 0, 0, YELLOW},
