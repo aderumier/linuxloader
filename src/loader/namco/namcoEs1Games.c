@@ -19,6 +19,27 @@ static const NamcoEs1Game games[] = {
         .calibration = 0x09126698,
     },
     {
+        // Tank! Tank! Tank! (tank_us_100226_rev1.03.14): an X11/GLX window
+        // (XF86VidMode), stripped, a portrait game.
+        .crc32 = TANKTANKTANK_ES1,
+        .fileCrc32 = 0x66136ee9,
+        .jvsDevice = "/dev/ttyS2",
+        .soundEmulation = 1,
+        .dongleInit = 0x080ac440,
+        .dongleReadDecoded = 0x080ac3a0,
+        .dongleUse = 0x080ac2e0,
+        .donglePresent = 0x080ac340,
+        .dongleSerial = "280911000001",
+        .rootPath = "/opt/arcade/exec",
+        .axisCalibration = 0x0ed7da50, // the input device's axes (0xed7da20 + 0x30)
+        .axisStride = 0x3c,
+        .axisIndex = 0x0863e280,
+        .axisInvert = 0x0863e260,
+        .windowFullscreenMov = 0x0804ff20, // movl $0x1,-0x74(%ebp)
+        .windowRotationMov = 0x0804ff27,   // movl $0x2,-0x60(%ebp)
+        .windowX11 = 1,
+    },
+    {
         // Dead Heat (US DRIVE, rev 6273). Nirin's platform (SDL 1.2 window,
         // the linked HASP HL), with DHR's boot sequence.
         .crc32 = DEADHEAT_ES1,

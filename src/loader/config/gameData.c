@@ -19,6 +19,7 @@ static const GameData gameData[] = {
     {ANGRY_BIRDS_RT, "Angry Birds Arcade", "angry-birds", "Raw Thrills", "RT-AB", "2016", "768x1360", WORKING, NO_JVS_IO, SHOOTING, 768, 1360, -1, 0, 0, 0, 0, 0, 0, RED},
     {MOTOGP_RT, "MotoGP", "motogp", "Raw Thrills", "RT-MGP", "2016", "1360x768", NOT_WORKING, NO_JVS_IO, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {NIRIN_ES1, "Nirin", "nirin", "Namco ES1", "NRN100", "2009", "1360x768", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
+    {TANKTANKTANK_ES1, "Tank! Tank! Tank!", "tanktanktank", "Namco ES1", "TANK100", "2009", "768x1360", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {DEADHEAT_ES1, "Dead Heat", "deadheat", "Namco ES1", "USDRIVE", "2011", "1360x768", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {DHRIDERS_ES1, "Dead Heat Riders", "dhriders", "Namco ES1", "DHR100", "2013", "1360x768", WORKING, NAMCO_NA_JV, DRIVING, 1360, 768, -1, 0, 0, 0, 0, 0, 0, RED},
     {AFTER_BURNER_CLIMAX_SBLR, "After Burner Climax", "abc", "DVP-0009", "SBLR", "2006", "640x480", WORKING, SEGA_TYPE_1, FLYING, 640, 480, GROUP_ABC, 0, 0, 0, 0, 0, 0, YELLOW},
