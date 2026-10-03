@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "rawthrills.h"
+#include "../namco/namcoEs1.h"
 
 #define VIDEO_PREFIX "/dev/video"
 #define MAX_VIDEO_DEVICES 64
@@ -30,7 +31,7 @@ static int videoFd[MAX_VIDEO_DEVICES];
 int rtVideoIsPath(const char *path)
 {
     const char *n = path + sizeof(VIDEO_PREFIX) - 1;
-    if (!isRawThrillsGame() || strncmp(path, VIDEO_PREFIX, sizeof(VIDEO_PREFIX) - 1) || !*n)
+    if ((!isRawThrillsGame() && !isNamcoEs1Game()) || strncmp(path, VIDEO_PREFIX, sizeof(VIDEO_PREFIX) - 1) || !*n)
         return 0;
     for (; *n; n++)
         if (*n < '0' || *n > '9')
@@ -99,7 +100,15 @@ int rtVideoOpen(const char *path, int flags, int mode, int (*realOpen)(const cha
 
     if (n < 0 || n >= MAX_VIDEO_DEVICES)
         return realOpen(path, flags, mode);
-    if (!lookAt(n, realOpen))
+    // The Namco ES1 games open /dev/video0 only: the first camera, wherever
+    // it is (a laptop's often has its infrared one or metadata nodes first).
+    char camera[32];
+    if (isNamcoEs1Game() && lookAt(n, realOpen) < 0 && (n = firstCamera(realOpen)) >= 0)
+    {
+        snprintf(camera, sizeof(camera), VIDEO_PREFIX "%d", n);
+        path = camera;
+    }
+    if (n < 0 || !lookAt(n, realOpen))
         return realOpen(path, flags, mode);
     if (videoState[n] < 0)
     {

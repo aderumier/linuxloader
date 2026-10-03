@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "rawthrills.h"
+#include "../namco/namcoEs1.h"
 #include "../config/config.h"
 #include "../log/log.h"
 
@@ -57,6 +58,8 @@ const char *rtRedirectPath(const char *path, char *buf, size_t size)
     const RtGame *g = rtCurrentGame();
     size_t rootLen;
 
+    if (!g && path)
+        return namcoEs1RedirectPath(path, buf, size);
     if (!g || !path || !gameDir[0])
         return path;
 

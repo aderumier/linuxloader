@@ -1,6 +1,7 @@
-// OSS /dev/dsp emulation for the g5 engine's JPS sound engine, on top of
-// SDL3 audio. The game only uses the basic OSS API: format/channels/rate
-// setup, fragment setup, GETOSPACE, mixer volume ioctls and blocking writes.
+// OSS /dev/dsp emulation for the g5 engine's JPS sound engine, and for the
+// OSS backend of the OpenAL the Namco ES1 games ship, on top of SDL3 audio.
+// The games only use the basic OSS API: format/channels/rate setup, fragment
+// setup, GETOSPACE, mixer volume ioctls and blocking writes.
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -11,6 +12,7 @@
 #include <SDL3/SDL.h>
 
 #include "rawthrills.h"
+#include "../namco/namcoEs1.h"
 #include "../log/log.h"
 
 #define DSP_FRAGMENTS 4
@@ -67,7 +69,7 @@ static int fragmentSize = DSP_FRAGMENT_SIZE;
 
 int rtDspIsPath(const char *path)
 {
-    return isRawThrillsGame() && path && strcmp(path, "/dev/dsp") == 0;
+    return (isRawThrillsGame() || isNamcoEs1Game()) && path && strcmp(path, "/dev/dsp") == 0;
 }
 
 int rtDspIsFd(int fd)
