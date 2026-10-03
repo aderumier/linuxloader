@@ -75,6 +75,7 @@ char *games[] = {"a.elf",
                  "game", // Raw Thrills (Jurassic Park)
                  "vt3_Lindbergh",
                  "n_tank_release", // Namco ES1 (Tank! Tank! Tank!)
+                 "main",           // Namco N2 (Wangan Midnight Maximum Tune 3)
                  "END"};
 
 /**
