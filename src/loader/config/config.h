@@ -33,6 +33,7 @@
 // Raw Thrills, g6 engine; the CRC of the patched copy, for both TeknoParrot's
 // game and the untouched game0.
 #define MOTOGP_RT 0x470a9e32
+#define NIRIN_ES1 0x71e72ff6                                     // Namco ES1, NRN100-4-NA-DAT0-A37
 #define AFTER_BURNER_CLIMAX_SBLR 0xa3c246e2                       // DVP-0009
 #define AFTER_BURNER_CLIMAX_SBLR_REVA 0xe657b1c0                  // DVP-0009A
 #define AFTER_BURNER_CLIMAX_SBLR_REVB 0xdb9d8396                  // DVP-0009B
