@@ -425,6 +425,10 @@ typedef struct RtGame
     void (*ioFrame)(struct JVSIO *io);
 } RtGame;
 
+// Wheel of Fortune's own hooks (rtWof.c), its descriptor's install. Weak:
+// the launcher links the descriptors without them (NULL there, never called).
+void rtWofInstall(const RtGame *game) __attribute__((weak));
+
 const RtGame *rtGetGame(uint32_t crc32);
 const RtGame *rtGetGameByFileCrc(uint32_t fileCrc32);
 
