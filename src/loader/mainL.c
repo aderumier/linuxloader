@@ -57,6 +57,14 @@ static void handleSegfault(int signal, siginfo_t *info, void *ptr)
     greg_t eip_value = ctx->uc_mcontext.gregs[REG_EIP];
     uint8_t *code = (uint8_t *)(size_t)eip_value; // Use uintptr_t to ensure proper alignment
 
+    // in %dx,%al / out %al,%dx on a Raw Thrills game's parallel port panel.
+    if ((*code == 0xEC || *code == 0xEE) &&
+        rtDondPortIo(*code == 0xEC, ctx->uc_mcontext.gregs[REG_EDX] & 0xFFFF, (uint32_t *)&ctx->uc_mcontext.gregs[REG_EAX]))
+    {
+        ctx->uc_mcontext.gregs[REG_EIP]++;
+        return;
+    }
+
     switch (*code)
     {
         case 0xED: // IN
