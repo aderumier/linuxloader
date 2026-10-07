@@ -291,6 +291,10 @@ void bridgeglEnable(GLenum cap)
     {
         cap = GL_FRAGMENT_PROGRAM_ARB;
     }
+    // Before the game's context is current (WMMT4's first glEnable): nothing
+    // to enable, as without a context.
+    if (!glad_glEnable)
+        return;
     glad_glEnable(cap);
 }
 
@@ -311,6 +315,10 @@ void bridgeglDisable(GLenum cap)
     {
         cap = GL_FRAGMENT_PROGRAM_ARB;
     }
+    // Before the game's context is current (WMMT4's first glEnable): nothing
+    // to enable, as without a context.
+    if (!glad_glDisable)
+        return;
     glad_glDisable(cap);
 }
 
