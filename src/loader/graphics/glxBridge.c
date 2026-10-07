@@ -436,14 +436,29 @@ int bridgegluUnProject(double winX, double winY, double winZ, const double *mode
 void bridgeGlxSwapBuffers(Display *dpy, GLXDrawable drawable)
 {
     EmulatorConfig *config = getConfig();
+    // A game drawing at a size of its own (Police Trainer 2's 640x480, in
+    // the window's bottom left corner) gets its border once its frame is
+    // scaled into the window, around the picture: drawn before, at the
+    // window's size, it fell partly outside the frame and covered the rest.
+    bool ownSize = blitWidth != config->width || blitHeight != config->height;
 
-    if (config->borderEnabled)
+    if (config->borderEnabled && !ownSize)
         drawGameBorder(config->width, config->height, config->whiteBorderPercentage, config->blackBorderPercentage);
 
     if (p1CrossHairInitialized || p2CrossHairInitialized)
         renderCrosshairs();
 
     blitStretch();
+    if (config->borderEnabled && ownSize)
+    {
+        GLint scissorBox[4];
+        GLboolean scissor = glad_glIsEnabled(GL_SCISSOR_TEST);
+        glad_glGetIntegerv(GL_SCISSOR_BOX, scissorBox);
+        drawGameBorderAt(dest.X, dest.Y, dest.W, dest.H, config->whiteBorderPercentage, config->blackBorderPercentage);
+        glad_glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
+        if (scissor)
+            glad_glEnable(GL_SCISSOR_TEST);
+    }
     overlayInit();
     overlayRender();
 
@@ -489,6 +504,15 @@ extern Display *x11Display;
 
 void glXSwapBuffers(Display *dpy, GLXDrawable drawable)
 {
+    if (!getSDLWindow())
+    {
+        // windowX11 games (e.g. Namco ES1 with their own X window) manage their
+        // own GLX context and swap; pass straight through to the real GLX.
+        void (*_glXSwapBuffers)(Display *, GLXDrawable) = dlsym(RTLD_NEXT, "glXSwapBuffers");
+        if (_glXSwapBuffers)
+            _glXSwapBuffers(dpy, drawable);
+        return;
+    }
     bridgeGlxSwapBuffers(dpy, drawable);
 }
 
@@ -501,11 +525,51 @@ GLXContext glXCreateContext(Display *dpy, XVisualInfo *vis, GLXContext shareList
     GLXContext ctx = NULL;
     if (ctxCnt == 0)
         ctx = (GLXContext)getSDLContext();
-    else
+    if (!ctx)
+        // No SDL-managed context: windowX11 games create their own X window and
+        // GLX context, so use the real GLX implementation instead.
         ctx = _glXCreateContext(dpy, vis, shareList, direct);
 
     ctxCnt++;
     return ctx;
+}
+
+// windowX11 games manage their own window and context: the loader's GL
+// wrappers (glEnable, glBindTexture, ...) call through glad's entry points,
+// which need loading once the game's context is current (normally done after
+// the SDL window).
+static void ownContextCurrent(void)
+{
+    static int glLoaded;
+    if (glLoaded || getSDLWindow())
+        return;
+    GLADloadfunc getProcAddress = (GLADloadfunc)dlsym(RTLD_DEFAULT, "glXGetProcAddressARB");
+    glLoaded = 1;
+    if (!getProcAddress || !gladLoadGL(getProcAddress))
+        log_error("windowX11: cannot load the GL entry points");
+}
+
+int glXMakeCurrent(Display *dpy, GLXDrawable drawable, GLXContext ctx)
+{
+    int (*_glXMakeCurrent)(Display *, GLXDrawable, GLXContext) =
+        dlsym(RTLD_NEXT, "glXMakeCurrent");
+    int result = _glXMakeCurrent(dpy, drawable, ctx);
+
+    if (result)
+        ownContextCurrent();
+    return result;
+}
+
+// The GLX 1.3 way (Tank! Tank! Tank!).
+Bool glXMakeContextCurrent(Display *dpy, GLXDrawable draw, GLXDrawable read, GLXContext ctx)
+{
+    Bool (*_glXMakeContextCurrent)(Display *, GLXDrawable, GLXDrawable, GLXContext) =
+        dlsym(RTLD_NEXT, "glXMakeContextCurrent");
+    Bool result = _glXMakeContextCurrent(dpy, draw, read, ctx);
+
+    if (result)
+        ownContextCurrent();
+    return result;
 }
 
 GLXFBConfig *glXChooseFBConfig(Display *dpy, int screen, const int *attrib_list, int *nelements)
@@ -588,6 +652,11 @@ GLXContext glXCreateContextWithConfigSGIX(Display *dpy, GLXFBConfigSGIX config, 
 
 Display *glXGetCurrentDisplay(void)
 {
+    if (!getSDLWindow())
+    {
+        Display *(*real)(void) = dlsym(RTLD_NEXT, "glXGetCurrentDisplay");
+        return real ? real() : NULL;
+    }
     return x11Display;
 }
 
