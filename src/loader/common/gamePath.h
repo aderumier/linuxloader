@@ -3,9 +3,18 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 // The running game's cabinet paths mapped to their host location, by its
 // system (Raw Thrills, Namco ES1 and N2, Teamplay, Global VR, Roxor, Cecropia, IGS): path, or buf
 // holding the mapped one.
 const char *gameRedirectPath(const char *path, char *buf, size_t size);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // GAME_PATH_H
