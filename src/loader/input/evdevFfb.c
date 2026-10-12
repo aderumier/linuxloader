@@ -1,3 +1,4 @@
+#ifdef __linux__
 // Force feedback on one evdev device (see evdevFfb.h).
 
 #include <fcntl.h>
@@ -211,3 +212,4 @@ void evdevFfbVibration(float strength)
     }
     upload(&vibrationEffect, level);
 }
+#endif
