@@ -1,3 +1,4 @@
+#ifdef __linux__
 // Force feedback on one evdev device (see evdevFfb.h).
 
 #include <fcntl.h>
@@ -181,3 +182,4 @@ void evdevFfbDamper(float strength)
     if (level != damperEffect.level)
         condition(&damperEffect, level);
 }
+#endif
