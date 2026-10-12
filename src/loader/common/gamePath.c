@@ -3,27 +3,37 @@
 // the loader's file interposers (redirections/filesystemShared.c) and the
 // libc path calls below.
 
-#include <dlfcn.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
 #include "gamePath.h"
+#include "../teamplay/teamplay.h"
+#ifdef __linux__
+#include <dlfcn.h>
 #include "../rawthrills/rawthrills.h"
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
-#include "../teamplay/teamplay.h"
 #include "../globalvr/gvr.h"
 #include "../roxor/roxor.h"
+#endif
 
+// The running game's cabinet paths mapped to their host location, by its
+// system (Raw Thrills, Namco ES1 and N2, Teamplay, Global VR, Roxor): path, or
+// buf holding the mapped one. The systems compiled in on the host's: Linux,
+// all of them; Windows, Teamplay (see the family's port).
 const char *gameRedirectPath(const char *path, char *buf, size_t size)
 {
     if (!path)
         return path;
+#ifdef __linux__
     if (isRawThrillsGame())
         return rtRedirectPath(path, buf, size);
+#endif
     if (isTeamplayGame())
         return teamplayRedirectPath(path, buf, size);
+#ifdef __linux__
     if (isGvrGame())
         return gvrRedirectPath(path, buf, size);
     if (isRoxorGame())
@@ -32,9 +42,11 @@ const char *gameRedirectPath(const char *path, char *buf, size_t size)
         return namcoEs1RedirectPath(path, buf, size);
     if (isNamcoN2Game())
         return namcoN2RedirectPath(path, buf, size);
+#endif
     return path;
 }
 
+#ifdef __linux__
 #define REDIRECT(path)                                                                                                \
     char redirectBuf[PATH_MAX];                                                                                       \
     path = gameRedirectPath(path, redirectBuf, sizeof(redirectBuf))
@@ -109,3 +121,4 @@ int __lxstat64(int ver, const char *path, struct stat64 *st)
     REDIRECT(path);
     return real(ver, path, st);
 }
+#endif // __linux__
