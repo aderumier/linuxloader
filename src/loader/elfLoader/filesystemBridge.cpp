@@ -10,6 +10,7 @@
 #include <direct.h>
 #include <cstdarg>
 #include "../config/config.h"
+#include "../common/gamePath.h"
 
 extern std::string g_absoluteElfPath;
 
@@ -241,6 +242,9 @@ namespace FileSystemBridge
 
     int bridgeAccess(const char *pathname, int mode)
     {
+        char pathBuf[MAX_PATH];
+        pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
+
         if (pathname && strstr(pathname, "/dev/") != NULL)
         {
             return 0; // Success
@@ -252,6 +256,8 @@ namespace FileSystemBridge
 
     int bridgeChdir(const char *path)
     {
+        char pathBuf[MAX_PATH];
+        path = gameRedirectPath(path, pathBuf, sizeof(pathBuf));
         char winPath[MAX_PATH];
         ConvertPath(winPath, path, MAX_PATH);
         log_debug("chdir: %s (as %s)", path, winPath);
@@ -305,7 +311,10 @@ extern "C"
 
         if(strncmp(name, "/proc", 5) == 0)
             return 0;
-            
+
+        char pathBuf[MAX_PATH];
+        name = gameRedirectPath(name, pathBuf, sizeof(pathBuf));
+
         char winPath[MAX_PATH];
         ConvertPath(winPath, name, MAX_PATH);
 
@@ -405,6 +414,8 @@ extern "C"
 
     int bridgeUnlink(const char *pathname)
     {
+        char pathBuf[MAX_PATH];
+        pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
         if (strncmp(pathname, "/tmp", 4) == 0)
         {
             pathname += 1;
@@ -415,6 +426,10 @@ extern "C"
     int bridgeRename(const char *oldpath, const char *newpath)
     {
         log_debug("rename(\" % s\", \" % s\")", oldpath, newpath);
+        char oldBuf[MAX_PATH];
+        oldpath = gameRedirectPath(oldpath, oldBuf, sizeof(oldBuf));
+        char newBuf[MAX_PATH];
+        newpath = gameRedirectPath(newpath, newBuf, sizeof(newBuf));
         char winOld[MAX_PATH];
         char winNew[MAX_PATH];
         ConvertPath(winOld, oldpath, MAX_PATH);
@@ -501,6 +516,9 @@ extern "C"
 
     static int myStatImpl(const char *path, void *buf, bool use_stat64)
     {
+        char pathBuf[MAX_PATH];
+        path = gameRedirectPath(path, pathBuf, sizeof(pathBuf));
+
         if (strncmp(path, "/tmp", 4) == 0)
             path += 1;
 

@@ -3,6 +3,7 @@ build-bato/
 build-linux/
 build-ubuntu/
 build-win32/
+build-win32x/
 compile_commands.json
 tools/dongle-recording/*.o
 tools/dongle-recording/*.elf
