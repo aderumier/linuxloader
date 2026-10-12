@@ -2,18 +2,27 @@
 // that keep a game from starting off the cabinet.
 
 #include <dirent.h>
-#include <dlfcn.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
-#include <unistd.h>
 #include <x86intrin.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <direct.h>
+#ifndef PATH_MAX
+#define PATH_MAX 260
+#endif
+#else
+#include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #include "teamplay.h"
 #include "../hostLinker.h"
@@ -118,6 +127,7 @@ const char *teamplayRedirectPath(const char *path, char *buf, size_t size)
     return path;
 }
 
+#ifndef _WIN32
 const char *teamplayRedirectCommand(const char *command, char *buf, size_t size)
 {
     const char *linker;
@@ -178,6 +188,7 @@ __attribute__((destructor)) static void teamplayHandOff(void)
         execl(linker, linker, handOffProgram, (char *)NULL);
     log_error("Teamplay: cannot run %s", handOffProgram);
 }
+#endif
 
 int teamplayDropCommand(const char *command)
 {
@@ -191,21 +202,29 @@ static int one(void)
 
 static double nowSeconds(void)
 {
+#ifdef _WIN32
+    return (double)GetTickCount64() / 1e3;
+#else
     struct timespec ts;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec / 1e9;
+#endif
 }
 
 // The TSC's rate in MHz, over 100 ms: a game that counts time in TSC ticks
 // divides them by its CPU's "cpu MHz".
 static double tscMHz(void)
 {
-    struct timespec delay = {0, 100000000};
     double start = nowSeconds();
     unsigned long long ticks = __rdtsc();
 
+#ifdef _WIN32
+    Sleep(100);
+#else
+    struct timespec delay = {0, 100000000};
     nanosleep(&delay, NULL);
+#endif
     ticks = __rdtsc() - ticks;
     return ticks / (nowSeconds() - start) / 1e6;
 }
@@ -226,18 +245,35 @@ static int vblankCount(void)
     if (count == last)
     {
         double wait = start + (count + 1) / 60.0 - now;
+#ifdef _WIN32
+        Sleep(wait > 0 ? (DWORD)(wait * 1e3) : 0);
+#else
         struct timespec delay = {0, wait > 0 ? (long)(wait * 1e9) : 0};
         nanosleep(&delay, NULL);
+#endif
         count++;
     }
     last = count;
     return count;
 }
 
-// A file of our own, in memory, holding text: its /proc/self/fd path in
-// path, or an empty one.
+// A file of our own, holding text: its path in path, or an empty one. In
+// memory, on the cabinet (its /proc/self/fd path); in the game's tmp/, here.
 static void memoryFile(const char *name, const char *text, char *path, size_t size)
 {
+#ifdef _WIN32
+    char winPath[64];
+    FILE *f;
+
+    path[0] = '\0';
+    snprintf(winPath, sizeof(winPath), "tmp\\%s", name);
+    if ((f = fopen(winPath, "wb")))
+    {
+        fwrite(text, 1, strlen(text), f);
+        fclose(f);
+        snprintf(path, size, "tmp/%s", name);
+    }
+#else
     int fd = memfd_create(name, 0);
 
     path[0] = '\0';
@@ -245,13 +281,18 @@ static void memoryFile(const char *name, const char *text, char *path, size_t si
         snprintf(path, size, "/proc/self/fd/%d", fd);
     else if (fd >= 0)
         close(fd);
+#endif
 }
 
 int teamplayInit(void)
 {
     const TeamplayGame *g = teamplayCurrentGame();
 
+#ifdef _WIN32
+    if (!_getcwd(gameDir, sizeof(gameDir)))
+#else
     if (!getcwd(gameDir, sizeof(gameDir)))
+#endif
         gameDir[0] = '\0';
 
     // The sound daemon only needs the cabinet's paths.
