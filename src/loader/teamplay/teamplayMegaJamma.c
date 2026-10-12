@@ -92,7 +92,13 @@ int teamplayMjOpen(int (*realOpen)(const char *, int, ...))
     pthread_mutex_lock(&lock);
     trace = getenv("TEAMPLAY_MJ_TRACE") != NULL;
     if (mjFd < 0)
+    {
+#ifdef _WIN32
+        mjFd = realOpen("NUL", O_RDWR);
+#else
         mjFd = realOpen("/dev/null", O_RDWR);
+#endif
+    }
     packetPending = 1;
     pthread_mutex_unlock(&lock);
     return mjFd;
