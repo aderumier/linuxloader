@@ -21,13 +21,13 @@
 #include "rawthrills/rawthrills.h"
 #include "namco/namcoEs1.h"
 #include "namco/namcoN2.h"
-#include "teamplay/teamplay.h"
 #include "globalvr/gvr.h"
 #include "roxor/roxor.h"
 #include "cecropia/cecropia.h"
 #include "igs/igs.h"
 #include "common/desktopInput.h"
 #endif
+#include "teamplay/teamplay.h"
 
 #if defined(__linux__)
 #include "input/evdevInput.h"
@@ -271,12 +271,12 @@ void initMain(char *configPath, char *controlsPath)
         exit(1);
     log_info("Resolution patches initialized");
 
-#ifdef __linux__
     // Teamplay games run as the Lindbergh glut games do; their cabinet's
     // checks are hooked here, before the hooks are enabled (see
     // teamplay/teamplay.c).
     if (isTeamplayGame() && teamplayInit() != 0)
         exit(1);
+#ifdef __linux__
     // Global VR games too (see globalvr/gvr.c).
     if (isGvrGame() && gvrInit() != 0)
         exit(1);

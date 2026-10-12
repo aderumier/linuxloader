@@ -29,13 +29,16 @@
 #ifdef __linux__
 #include <limits.h>
 #include "../rawthrills/rawthrills.h"
-#include "../common/gamePath.h"
 #include "../common/ossDsp.h"
 #include "../common/webcam.h"
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
-#include "../teamplay/teamplay.h"
 #include "../globalvr/gvr.h"
+#endif
+#include "../common/gamePath.h"
+#include "../teamplay/teamplay.h"
+#ifndef PATH_MAX
+#define PATH_MAX 260
 #endif
 #include "../resources/font.h"
 #include "../resources/lindberghLogo.h"
@@ -104,10 +107,8 @@ int sharedRemove(const char *path)
 {
     if (_remove == NULL)
         _remove = REAL_FUNC(remove);
-#ifdef __linux__
     char pathBuf[PATH_MAX];
     path = gameRedirectPath(path, pathBuf, sizeof(pathBuf));
-#endif
 
     if (strncmp(path, "/home/disk1/rankingdata/", 24) == 0 && (gGrp == GROUP_OUTRUN || gGrp == GROUP_OUTRUN_TEST))
     {
@@ -144,10 +145,8 @@ int sharedMkdir(const char *path, mode_t mode)
     if (_mkdir == NULL)
         _mkdir = REAL_FUNC(mkdir);
 #endif
-#ifdef __linux__
     char pathBuf[PATH_MAX];
     path = gameRedirectPath(path, pathBuf, sizeof(pathBuf));
-#endif
 
     if (strncmp(path, "/tmp", 4) == 0)
     {
@@ -255,9 +254,12 @@ int sharedOpen(const char *pathname, int flags, ...)
         return gvrGfxioOpen(_open);
     if (webcamIsPath(pathname))
         return webcamOpen(pathname, flags, mode, _open);
+#endif
+    // Teamplay: the MegaJamma board.
+    if (teamplayMjIsPath(pathname))
+        return teamplayMjOpen(_open);
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
-#endif
 
     if (strcmp(pathname, "/dev/lbb") == 0)
     {
@@ -360,10 +362,8 @@ FILE *sharedFopen(const char *restrict pathname, const char *restrict mode)
 {
     if (_fopen == NULL)
         _fopen = REAL_FUNC(fopen);
-#ifdef __linux__
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
-#endif
 #ifdef _WIN32
 
     if (strcmp(mode, "r") == 0)
@@ -595,10 +595,8 @@ FILE *sharedFopen64(const char *pathname, const char *mode)
 {
     if (_fopen64 == NULL)
         _fopen64 = REAL_FUNC(fopen64);
-#ifdef __linux__
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
-#endif
 
     if (strcmp(pathname, "/proc/sys/kernel/osrelease") == 0)
     {
@@ -748,11 +746,11 @@ int sharedClose(int fd)
         namcoEs1KickbackClose();
     if (namcoN2KickbackIsFd(fd))
         namcoN2KickbackClose();
-    if (teamplayMjIsFd(fd))
-        teamplayMjClose();
     if (gvrGfxioIsFd(fd))
         gvrGfxioClose();
 #endif
+    if (teamplayMjIsFd(fd))
+        teamplayMjClose();
 
 
     for (size_t i = 0; i < (sizeof hooks / sizeof hooks[0]); i++)
@@ -815,11 +813,11 @@ ssize_t sharedRead(int fd, void *buf, size_t count)
         return namcoEs1KickbackRead(buf, count);
     if (namcoN2KickbackIsFd(fd))
         return namcoN2KickbackRead(buf, count);
-    if (teamplayMjIsFd(fd))
-        return teamplayMjRead(buf, count);
     if (gvrGfxioIsFd(fd))
         return gvrGfxioRead(buf, count);
 #endif
+    if (teamplayMjIsFd(fd))
+        return teamplayMjRead(buf, count);
 
     if (fd == (int)hooks[BASEBOARD])
     {
@@ -1056,8 +1054,6 @@ int sharedIoctl(int fd, unsigned long int request, ...)
         return namcoEs1KickbackIoctl(request, argp);
     if (namcoN2KickbackIsFd(fd))
         return namcoN2KickbackIoctl(request, argp);
-    if (teamplayMjIsFd(fd))
-        return teamplayMjIoctl(request, argp);
     if (gvrGfxioIsFd(fd))
         return gvrGfxioIoctl(request, argp);
     if (request == SIOCGIFHWADDR && isNamcoEs1Game())
@@ -1075,6 +1071,8 @@ int sharedIoctl(int fd, unsigned long int request, ...)
     if (request == 0x4014563c && isNamcoEs1Game())
         return 0;
 #endif
+    if (teamplayMjIsFd(fd))
+        return teamplayMjIoctl(request, argp);
 
     if (fd == (int)hooks[EEPROM])
     {
