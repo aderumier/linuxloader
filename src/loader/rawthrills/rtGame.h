@@ -457,6 +457,7 @@ void rtAbIoFrame(struct JVSIO *io) __attribute__((weak));
 // Ghostbusters' IR backend and optional shader backup (rtGb.c).
 void rtGbInstall(const RtGame *game) __attribute__((weak));
 void rtSifInstall(const RtGame *game) __attribute__((weak));
+void rtWlpInstall(const RtGame *game) __attribute__((weak));
 
 // Deal or No Deal's panel and dongle (rtDond.c), the same way.
 void *rtDondOverride(const char *name) __attribute__((weak));
