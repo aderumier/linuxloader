@@ -54,6 +54,16 @@ void namcoEs1NetworkCommand(const char *command);
 // WMMT4's shop terminal, announcing itself on the cabinet LAN with the
 // drive's serial (namcoEs1Wmmt4Terminal.c).
 void namcoEs1Wmmt4StartTerminal(const char *serial);
+
+// The Wangan games' shared hooks (namcoEs1Wmmt4.c): their display, GL and
+// cabinet LAN (window title, NULL for WMMT4's); and the helpers putting a
+// jmp at a function (namcoEs1Detour), other bytes over code (namcoEs1Patch)
+// or a MinHook with its original (namcoEs1HookOriginal), each only where the
+// code is the expected one.
+void namcoEs1Wangan(const char *title);
+void namcoEs1Detour(uint32_t address, const uint8_t *expected, size_t n, void *replacement);
+void namcoEs1Patch(uint32_t address, const uint8_t *expected, const uint8_t *replacement, size_t n);
+void namcoEs1HookOriginal(uint32_t address, const uint8_t *expected, size_t n, void *replacement, void *original);
 // The host's first interface with an IPv4 address, as the game's eth0
 // (127.0.0.1 without one).
 void namcoEs1HostInterface(unsigned char address[4], unsigned char mask[4], unsigned char mac[6]);

@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "namcoEs1.h"
+#include "namcoEs1Wmmt4Server.h"
 #include "../common/importHook.h"
 #include "../config/config.h"
 #include "../graphics/shaderPatches.h"
@@ -36,23 +37,42 @@
 
 // Overwrite a function's entry with a jmp to the replacement, if its first
 // bytes are the expected ones.
-static void detour(uint32_t address, const uint8_t *expected, size_t n, void *replacement)
+void namcoEs1Detour(uint32_t address, const uint8_t *expected, size_t n, void *replacement)
 {
     uint8_t *target = (uint8_t *)(uintptr_t)address;
     uintptr_t page = address & ~(uintptr_t)0xfff;
 
     if (memcmp(target, expected, n) != 0)
     {
-        log_error("WMMT4: unexpected code at %#x, not hooked", address);
+        log_error("Namco ES1: unexpected code at %#x, not hooked", address);
         return;
     }
     if (mprotect((void *)page, (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
     {
-        log_error("WMMT4: cannot make %#x writable", address);
+        log_error("Namco ES1: cannot make %#x writable", address);
         return;
     }
     target[0] = 0xe9;
     *(int32_t *)(target + 1) = (int32_t)((uint8_t *)replacement - (target + 5));
+}
+
+// Overwrite code with other bytes, if it is the expected one.
+void namcoEs1Patch(uint32_t address, const uint8_t *expected, const uint8_t *replacement, size_t n)
+{
+    uint8_t *target = (uint8_t *)(uintptr_t)address;
+    uintptr_t page = address & ~(uintptr_t)0xfff;
+
+    if (memcmp(target, expected, n) != 0)
+    {
+        log_error("Namco ES1: unexpected code at %#x, not patched", address);
+        return;
+    }
+    if (mprotect((void *)page, (address + n - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+    {
+        log_error("Namco ES1: cannot make %#x writable", address);
+        return;
+    }
+    memcpy(target, replacement, n);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +508,8 @@ static Window (*realCreateWindow)(Display *, Window, int, int, unsigned, unsigne
                                   unsigned long, XSetWindowAttributes *);
 static int (*realMoveResizeWindow)(Display *, Window, int, int, unsigned, unsigned);
 static Window gameWindow;
+static int scaleTrace; // WANGAN_SCALE_TRACE: the window's and the frame's sizes
+static const char *windowTitle = "Wangan Midnight Maximum Tune 4";
 
 static void windowSize(unsigned *width, unsigned *height)
 {
@@ -512,13 +534,15 @@ __attribute__((force_align_arg_pointer)) static Window createWindow(Display *dpy
         mask &= ~CWOverrideRedirect;
     }
     Window window = realCreateWindow(dpy, parent, x, y, width, height, border, depth, cls, visual, mask, attributes);
+    if (scaleTrace && topLevel)
+        fprintf(stderr, "Wangan scale: window %#lx %ux%u depth %d\n", (unsigned long)window, width, height, depth);
     if (window && topLevel)
     {
         // This process's window, for the loader's quit watch (Esc).
         long pid = getpid();
         XChangeProperty(dpy, window, XInternAtom(dpy, "_NET_WM_PID", False), XA_CARDINAL, 32, PropModeReplace,
                         (unsigned char *)&pid, 1);
-        XStoreName(dpy, window, "Wangan Midnight Maximum Tune 4");
+        XStoreName(dpy, window, windowTitle);
         gameWindow = window;
     }
     return window;
@@ -680,10 +704,68 @@ static const struct
     {"glGetFenceivNV", (void *)getFenceiv},
 };
 
+// NV_framebuffer_multisample_coverage (CSAA), which 5DX+ makes some of its
+// offscreen buffers with: NVIDIA's only, NULL on Mesa (the garage's car then
+// drawn without its depth buffer, seen through itself). Its color samples
+// through the standard multisampled storage.
+typedef void (*RenderbufferStorageMultisampleFn)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+static RenderbufferStorageMultisampleFn realStorageMultisample;
+static int scaleTraceGl;
+
+__attribute__((force_align_arg_pointer)) static void storageMultisampleCoverage(GLenum target, GLsizei coverage,
+                                                                                GLsizei color, GLenum format,
+                                                                                GLsizei width, GLsizei height)
+{
+    if (scaleTraceGl)
+        fprintf(stderr, "Wangan GL: RenderbufferStorageMultisampleCoverageNV(%d coverage, %d color, %#x, %dx%d)\n",
+                (int)coverage, (int)color, format, (int)width, (int)height);
+    realStorageMultisample(target, color, format, width, height);
+}
+
+// NV_depth_buffer_float's double entry points (glClearDepthdNV,
+// glDepthRangedNV), which 5DX+ sets its depth with: Mesa has no such
+// extension and hands out functions doing nothing (the garage's car drawn
+// against a depth never set, seen through itself). The standard calls, the
+// values clamped to their range.
+static double clampDepth(double v)
+{
+    return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+__attribute__((force_align_arg_pointer)) static void clearDepthd(double depth)
+{
+    static int logged;
+    if (scaleTraceGl && logged++ < 5)
+        fprintf(stderr, "Wangan GL: glClearDepthdNV(%g)\n", depth);
+    glad_glClearDepth(clampDepth(depth));
+}
+
+__attribute__((force_align_arg_pointer)) static void depthRanged(double nearValue, double farValue)
+{
+    static int logged;
+    if (scaleTraceGl && logged++ < 5)
+        fprintf(stderr, "Wangan GL: glDepthRangedNV(%g, %g)\n", nearValue, farValue);
+    glad_glDepthRange(clampDepth(nearValue), clampDepth(farValue));
+}
+
 static void *(*realGetProcAddress)(const char *);
 
 __attribute__((force_align_arg_pointer)) static void *getProcAddress(const char *name)
 {
+    if (name && !GLAD_GL_NV_depth_buffer_float && !strcmp(name, "glClearDepthdNV"))
+        return (void *)clearDepthd;
+    if (name && !GLAD_GL_NV_depth_buffer_float && !strcmp(name, "glDepthRangedNV"))
+        return (void *)depthRanged;
+    if (name && !strcmp(name, "glRenderbufferStorageMultisampleCoverageNV"))
+    {
+        void *own = realGetProcAddress(name);
+        if (own && GLAD_GL_NV_framebuffer_multisample_coverage)
+            return own;
+        realStorageMultisample = (RenderbufferStorageMultisampleFn)realGetProcAddress("glRenderbufferStorageMultisampleEXT");
+        if (!realStorageMultisample)
+            realStorageMultisample = (RenderbufferStorageMultisampleFn)realGetProcAddress("glRenderbufferStorageMultisample");
+        return realStorageMultisample ? (void *)storageMultisampleCoverage : NULL;
+    }
     if (name && !strcmp(name, "glXGetVideoSyncSGI"))
         return (void *)getVideoSync;
     if (name && !strcmp(name, "glXWaitVideoSyncSGI"))
@@ -733,8 +815,11 @@ __attribute__((force_align_arg_pointer)) static int gameSetsockopt(int fd, int l
 
 static void lanSource(struct sockaddr_in *from, const uint8_t *data, ssize_t n)
 {
-    if (!from || n < 2 || from->sin_family != AF_INET || from->sin_addr.s_addr != htonl(INADDR_LOOPBACK) ||
-        from->sin_port != htons(LAN_PORT) || data[0] != 1)
+    // WMMT4's group 1 from the LAN's port; 5DX+'s group 2, its terminal sending
+    // from 127.0.0.4 (namcoEs1Wmmt5.c).
+    if (!from || n < 2 || from->sin_family != AF_INET || (ntohl(from->sin_addr.s_addr) >> 24) != 127)
+        return;
+    if (!(data[0] == 1 && from->sin_port == htons(LAN_PORT)) && data[0] != 2)
         return;
     from->sin_addr.s_addr = htonl(0xc0a85c0b + data[1]); // 192.168.92.11 + PCB id
 }
@@ -886,6 +971,55 @@ static void drawFrame(int x, int y, int w, int h, int restore)
     glad_glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)read);
 }
 
+// The window's size, read on a connection of the loader's own by a thread of
+// its own (the GLX query can lag a resize behind; an X request on the game's
+// connection from its render thread, while its main thread uses it too,
+// broke the protocol now and then: a BadPixmap, Xlib's exit, the game's
+// heap freed under its threads).
+static volatile unsigned windowWidth, windowHeight;
+
+static void *windowSizeThread(void *arg)
+{
+    (void)arg;
+    Display *(*openDisplay)(const char *) = (Display * (*)(const char *)) dlsym(RTLD_NEXT, "XOpenDisplay");
+    Display *dpy = openDisplay ? openDisplay(NULL) : NULL;
+    if (!dpy)
+        return NULL;
+    for (;;)
+    {
+        XWindowAttributes a;
+        Window w = gameWindow;
+        if (w && realGetWindowAttributes(dpy, w, &a))
+        {
+            windowWidth = (unsigned)a.width;
+            windowHeight = (unsigned)a.height;
+        }
+        usleep(200000);
+    }
+    return NULL;
+}
+
+static void drawableSize(Display *dpy, GLXDrawable drawable, unsigned *width, unsigned *height)
+{
+    static int started;
+    *width = *height = 0;
+    if (!started)
+    {
+        pthread_t thread;
+        started = 1;
+        if (pthread_create(&thread, NULL, windowSizeThread, NULL) == 0)
+            pthread_detach(thread);
+    }
+    if (drawable == gameWindow && windowWidth && windowHeight)
+    {
+        *width = windowWidth;
+        *height = windowHeight;
+        return;
+    }
+    glXQueryDrawable(dpy, drawable, GLX_WIDTH, width);
+    glXQueryDrawable(dpy, drawable, GLX_HEIGHT, height);
+}
+
 // Before the swap; 1 when the frame was scaled.
 static int scaleFrame(Display *dpy, GLXDrawable drawable)
 {
@@ -893,8 +1027,16 @@ static int scaleFrame(Display *dpy, GLXDrawable drawable)
 
     if (!glXGetCurrentContext() || !glad_glCopyTexSubImage2D || !glad_glBindFramebuffer)
         return 0;
-    glXQueryDrawable(dpy, drawable, GLX_WIDTH, &width);
-    glXQueryDrawable(dpy, drawable, GLX_HEIGHT, &height);
+    drawableSize(dpy, drawable, &width, &height);
+    if (scaleTrace)
+    {
+        static unsigned lastW, lastH;
+        if (width != lastW || height != lastH)
+            fprintf(stderr, "Wangan scale: drawable %#lx (game window %#lx) %ux%u\n", (unsigned long)drawable,
+                    (unsigned long)gameWindow, width, height);
+        lastW = width;
+        lastH = height;
+    }
     if (!width || !height || (width == FRAME_WIDTH && height == FRAME_HEIGHT))
         return 0;
 
@@ -960,8 +1102,10 @@ static void shot(Display *dpy, GLXDrawable drawable)
 
 static void (*realSwapBuffers)(Display *, GLXDrawable);
 
+
 __attribute__((force_align_arg_pointer)) static void swapBuffers(Display *dpy, GLXDrawable drawable)
 {
+
     int scaled = !getConfig()->fullscreen && scaleFrame(dpy, drawable);
     if (shotDir)
         shot(dpy, drawable);
@@ -1111,16 +1255,16 @@ __attribute__((force_align_arg_pointer)) static void ffbSelfCheck(void *object)
     namcoEs1KickbackReportSelfCheck();
 }
 
-static void hookWithOriginal(uint32_t address, const uint8_t *expected, size_t n, void *replacement, void *original)
+void namcoEs1HookOriginal(uint32_t address, const uint8_t *expected, size_t n, void *replacement, void *original)
 {
     if (memcmp((const void *)(uintptr_t)address, expected, n) != 0)
     {
-        log_error("WMMT4: unexpected code at %#x, not hooked", address);
+        log_error("Namco ES1: unexpected code at %#x, not hooked", address);
         return;
     }
     if (MH_CreateHook((void *)(uintptr_t)address, replacement, (void **)original) != MH_OK ||
         MH_EnableHook((void *)(uintptr_t)address) != MH_OK)
-        log_error("WMMT4: cannot hook %#x", address);
+        log_error("Namco ES1: cannot hook %#x", address);
 }
 
 static void installFfb(void)
@@ -1134,37 +1278,188 @@ static void installFfb(void)
 
     ffbTrace = getenv("NAMCO_FFB_TRACE") != NULL;
     MH_Initialize(); // already done is fine
-    hookWithOriginal(0x08366e30, applyEntry, sizeof(applyEntry), (void *)ffbApply, &realFfbApply);
-    hookWithOriginal(0x08367aa0, powerEntry, sizeof(powerEntry), (void *)ffbPowerOn, &realFfbPowerOn);
-    hookWithOriginal(0x08367ac0, powerEntry, sizeof(powerEntry), (void *)ffbPowerOff, &realFfbPowerOff);
-    hookWithOriginal(0x08367ee0, selfCheckEntry, sizeof(selfCheckEntry), (void *)ffbSelfCheck, &realFfbSelfCheck);
+    namcoEs1HookOriginal(0x08366e30, applyEntry, sizeof(applyEntry), (void *)ffbApply, &realFfbApply);
+    namcoEs1HookOriginal(0x08367aa0, powerEntry, sizeof(powerEntry), (void *)ffbPowerOn, &realFfbPowerOn);
+    namcoEs1HookOriginal(0x08367ac0, powerEntry, sizeof(powerEntry), (void *)ffbPowerOff, &realFfbPowerOff);
+    namcoEs1HookOriginal(0x08367ee0, selfCheckEntry, sizeof(selfCheckEntry), (void *)ffbSelfCheck, &realFfbSelfCheck);
     evdevFfbOpen("WMMT4");
 }
 
 // ---------------------------------------------------------------------------
+// The test menu's settings (save/setting00/Setting.lua, a checksummed file):
+// with the loader's server the cabinet is not in offline mode (mOfflineMode,
+// set in the dump) and has its card reader (mIcCardRw). They are read, with
+// the other yes/no settings, by two readers of the game's (one per copy of
+// the file), which store a byte: called, then the byte set for those two.
 
-void namcoEs1Wmmt4Install(void)
+typedef void (*SettingRead)(void *, uint8_t *, const char *);
+
+static void settingOverride(const char *key, uint8_t *setting)
 {
-    static const uint8_t haspEntry[] = {0x83, 0xec}; // sub $imm8,%esp
-    static const uint8_t frameEntry[] = {0x55, 0x89, 0xe5}; // push %ebp; mov %esp,%ebp
+    if (!key || !setting)
+        return;
+    if (!strcmp(key, "mOfflineMode"))
+        *setting = 0;
+    else if (!strcmp(key, "mIcCardRw"))
+        *setting = 1;
+}
 
-    gameLog = getenv("NAMCO_GAME_LOG") != NULL;
+static SettingRead realReadSetting1, realReadSetting2;
+
+__attribute__((force_align_arg_pointer)) static void readSetting1(void *self, uint8_t *setting, const char *key)
+{
+    realReadSetting1(self, setting, key);
+    settingOverride(key, setting);
+}
+
+__attribute__((force_align_arg_pointer)) static void readSetting2(void *self, uint8_t *setting, const char *key)
+{
+    realReadSetting2(self, setting, key);
+    settingOverride(key, setting);
+}
+
+static void installSettings(void);
+
+// Sys::Network::SetOfflineMode(int), which the game calls with that
+// setting: online with the loader's server.
+static void (*realSetOffline)(int);
+
+__attribute__((force_align_arg_pointer)) static void setOffline(int offline)
+{
+    realSetOffline(getConfig()->wmmt4Server ? 0 : offline);
+}
+
+static void installSettings(void)
+{
+    static const uint8_t entry[] = {0x55, 0x89, 0xe5, 0x57, 0x56};
+    namcoEs1HookOriginal(0x08144b90, entry, sizeof(entry), (void *)readSetting1, &realReadSetting1);
+    namcoEs1HookOriginal(0x08144600, entry, sizeof(entry), (void *)readSetting2, &realReadSetting2);
+}
+
+// ---------------------------------------------------------------------------
+// The GL configs. The cabinet's visual asks 4x multisampling: on Mesa,
+// 5DX+'s contexts made multisampled crashed while loading; there they are
+// single-sampled (NVIDIA keeps the cabinet's).
+
+static int singleSampled(void)
+{
+    static int answer = -1;
+    if (answer < 0)
+        answer = access("/proc/driver/nvidia", F_OK) != 0;
+    return answer;
+}
+
+// The attributes without GLX_SAMPLE_BUFFERS / GLX_SAMPLES (pairs; the
+// visual's booleans have no value).
+static const int *withoutSamples(const int *list, int *out, int size, int visualStyle)
+{
+    int n = 0;
+    if (!list || !singleSampled())
+        return list;
+    for (int i = 0; list[i] != None && n < size - 3; i++)
+    {
+        int name = list[i];
+        int boolean = visualStyle && (name == GLX_USE_GL || name == GLX_RGBA || name == GLX_DOUBLEBUFFER ||
+                                      name == GLX_STEREO);
+        if (name != GLX_SAMPLE_BUFFERS && name != GLX_SAMPLES)
+        {
+            out[n++] = name;
+            if (!boolean)
+                out[n++] = list[i + 1];
+        }
+        if (!boolean)
+            i++;
+    }
+    out[n] = None;
+    return out;
+}
+
+// The visual the game's window is made with (glXChooseVisual's answer), and
+// its config.
+static VisualID windowVisual;
+
+__attribute__((force_align_arg_pointer)) static XVisualInfo *chooseVisual(Display *dpy, int screen, int *list)
+{
+    // The loader's own (graphics/glxBridge.c: without the aux and accumulation
+    // buffers Mesa lacks).
+    int reduced[128];
+    XVisualInfo *v = glXChooseVisual(dpy, screen, (int *)withoutSamples(list, reduced, 128, 1));
+    if (v)
+        windowVisual = v->visualid;
+    return v;
+}
+
+__attribute__((force_align_arg_pointer)) static GLXFBConfig *chooseFBConfig(Display *dpy, int screen, const int *list,
+                                                                           int *n)
+{
+    int reduced[128];
+    GLXFBConfig *c = glXChooseFBConfig(dpy, screen, withoutSamples(list, reduced, 128, 0), n);
+    if (scaleTrace && c && n && *n > 0)
+    {
+        int db = 0, depth = 0, stencil = 0, samples = 0;
+        glXGetFBConfigAttrib(dpy, c[0], GLX_DOUBLEBUFFER, &db);
+        glXGetFBConfigAttrib(dpy, c[0], GLX_DEPTH_SIZE, &depth);
+        glXGetFBConfigAttrib(dpy, c[0], GLX_STENCIL_SIZE, &stencil);
+        glXGetFBConfigAttrib(dpy, c[0], GLX_SAMPLES, &samples);
+        fprintf(stderr, "Wangan scale: first of %d configs: double %d depth %d stencil %d samples %d\n", *n, db, depth,
+                stencil, samples);
+    }
+    return c;
+}
+
+// The game's contexts. 5DX+ asks for any config (GLX_FBCONFIG_ID
+// GLX_DONT_CARE) and makes its contexts with the first: on Mesa a
+// single-buffered one, its contexts drawing into the window's front buffer,
+// which Mesa shows as they flush (the frame never scaled, in a corner). It
+// composes its frame from several contexts (its render and loading threads,
+// all bound to the window): each draws into the window's back buffer, which
+// the swap shows. (The window's double-buffered config for them instead
+// broke Mesa's heap more often; only the render context on the back buffer
+// left the frame black.) Known: on Mesa a boot in a few still crashes while
+// loading (heap corruption, four threads on the window's buffers).
+static Bool (*realMakeContextCurrent)(Display *, GLXDrawable, GLXDrawable, GLXContext);
+
+__attribute__((force_align_arg_pointer)) static Bool makeContextCurrent(Display *dpy, GLXDrawable draw, GLXDrawable read,
+                                                                     GLXContext c)
+{
+    Bool ok = realMakeContextCurrent(dpy, draw, read, c);
+    if (ok && c && gameWindow && draw == gameWindow && glad_glDrawBuffer)
+    {
+        GLint drawBuffer = 0, fbo = 0;
+        glad_glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+        glad_glGetIntegerv(GL_DRAW_BUFFER, &drawBuffer);
+        if (!fbo && (drawBuffer == GL_FRONT || drawBuffer == GL_FRONT_LEFT))
+        {
+            glad_glDrawBuffer(GL_BACK);
+            glad_glReadBuffer(GL_BACK);
+            if (scaleTrace)
+                fprintf(stderr, "Wangan scale: context %p draws into the back buffer\n", (void *)c);
+        }
+    }
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// What the Wangan games share, at no address of theirs (WMMT4 and 5DX+): the
+// display, frame pacing, GL fences and shaders, the cabinet LAN on loopback.
+// title: the window's name (NULL: WMMT4's).
+
+void namcoEs1Wangan(const char *title)
+{
+    // The game's threads share its X connection (its window and cursor on
+    // the main one, GL contexts on its loaders): Xlib made thread-safe
+    // before anything uses it (an X error now and then at startup, a
+    // BadPixmap, then Xlib's exit under the running threads).
+    XInitThreads();
+    scaleTrace = getenv("WANGAN_SCALE_TRACE") != NULL;
+    scaleTraceGl = scaleTrace;
+    if (title)
+        windowTitle = title;
     loadGlEntryPoints();
-    haspImage();
-    detour(0x08921fd0, haspEntry, sizeof(haspEntry), haspLogin);
-    detour(0x08922070, haspEntry, sizeof(haspEntry), haspNothing);  // hasp_logout
-    detour(0x0892215c, haspEntry, sizeof(haspEntry), haspNothing);  // hasp_encrypt
-    detour(0x08922248, haspEntry, sizeof(haspEntry), haspNothing);  // hasp_decrypt
-    detour(0x08922f60, haspEntry, sizeof(haspEntry), haspGetSize);
-    detour(0x08922dc8, haspEntry, sizeof(haspEntry), haspRead);
-    detour(0x08922e94, haspEntry, sizeof(haspEntry), haspWrite);
-    detour(0x08390ba0, frameEntry, sizeof(frameEntry), jvioMonitor);
-    detour(0x089e5c80, frameEntry, sizeof(frameEntry), sendCommand);
-    detour(0x0809ddb0, frameEntry, sizeof(frameEntry), logMes);
-    detour(0x0821c920, (const uint8_t[]){0x55}, 1, addressChanged);
-    detour(0x0821d4f0, frameEntry, sizeof(frameEntry), interfaceUpdate);
-    detour(0x080aa7d0, frameEntry, sizeof(frameEntry), networkUpdateState);
     *(void **)&realOpenDisplay = hookExecutableImport("XOpenDisplay", (void *)openDisplay);
+    hookExecutableImport("glXChooseVisual", (void *)chooseVisual);
+    *(void **)&realMakeContextCurrent = hookExecutableImport("glXMakeContextCurrent", (void *)makeContextCurrent);
+    hookExecutableImport("glXChooseFBConfig", (void *)chooseFBConfig);
     *(void **)&realCreateWindow = hookExecutableImport("XCreateWindow", (void *)createWindow);
     *(void **)&realSetsockopt = hookExecutableImport("setsockopt", (void *)gameSetsockopt);
     *(void **)&realRecvmsg = hookExecutableImport("recvmsg", (void *)gameRecvmsg);
@@ -1179,7 +1474,46 @@ void namcoEs1Wmmt4Install(void)
     *(void **)&realMoveResizeWindow = hookExecutableImport("XMoveResizeWindow", (void *)moveResizeWindow);
     *(void **)&realGetLatestProfile = hookExecutableImport("cgGLGetLatestProfile", (void *)getLatestProfile);
     *(void **)&realCreateProgram = hookExecutableImport("cgCreateProgram", (void *)createProgram);
+}
+
+// ---------------------------------------------------------------------------
+
+void namcoEs1Wmmt4Install(void)
+{
+    static const uint8_t haspEntry[] = {0x83, 0xec}; // sub $imm8,%esp
+    static const uint8_t frameEntry[] = {0x55, 0x89, 0xe5}; // push %ebp; mov %esp,%ebp
+
+    gameLog = getenv("NAMCO_GAME_LOG") != NULL;
+    namcoEs1Wangan(NULL);
+    haspImage();
+    namcoEs1Detour(0x08921fd0, haspEntry, sizeof(haspEntry), haspLogin);
+    namcoEs1Detour(0x08922070, haspEntry, sizeof(haspEntry), haspNothing);  // hasp_logout
+    namcoEs1Detour(0x0892215c, haspEntry, sizeof(haspEntry), haspNothing);  // hasp_encrypt
+    namcoEs1Detour(0x08922248, haspEntry, sizeof(haspEntry), haspNothing);  // hasp_decrypt
+    namcoEs1Detour(0x08922f60, haspEntry, sizeof(haspEntry), haspGetSize);
+    namcoEs1Detour(0x08922dc8, haspEntry, sizeof(haspEntry), haspRead);
+    namcoEs1Detour(0x08922e94, haspEntry, sizeof(haspEntry), haspWrite);
+    namcoEs1Detour(0x08390ba0, frameEntry, sizeof(frameEntry), jvioMonitor);
+    namcoEs1Detour(0x089e5c80, frameEntry, sizeof(frameEntry), sendCommand);
+    namcoEs1Detour(0x0809ddb0, frameEntry, sizeof(frameEntry), logMes);
+    namcoEs1Detour(0x0821c920, (const uint8_t[]){0x55}, 1, addressChanged);
+    namcoEs1Detour(0x0821d4f0, frameEntry, sizeof(frameEntry), interfaceUpdate);
+    namcoEs1Detour(0x080aa7d0, frameEntry, sizeof(frameEntry), networkUpdateState);
+    // The default ghosts (a ghost battle's opponents where the server gives
+    // none) are read from the "JP" table, loaded only by the English and
+    // Chinese locales (a Japanese server always gives them all): loaded
+    // whatever the locale (je skipped; the file: fileFallbacks).
+    namcoEs1Patch(0x08432bce, (const uint8_t[]){0x74, 0x15}, (const uint8_t[]){0x90, 0x90}, 2);
+    MH_Initialize(); // already done is fine
+    static const uint8_t setOfflineEntry[] = {0x55, 0x89, 0xe5, 0x83, 0xec, 0x08, 0xe8};
+    namcoEs1HookOriginal(0x080a5f40, setOfflineEntry, sizeof(setOfflineEntry), (void *)setOffline, &realSetOffline);
     installFfb();
+    if (getConfig()->wmmt4Server)
+    {
+        installSettings();
+        namcoEs1Wmmt4NetInstall();
+        namcoEs1Wmmt4CardInstall();
+    }
     namcoEs1Wmmt4StartTerminal(HASP_SERIAL);
     log_info("WMMT4: dongle serial %s", HASP_SERIAL);
 }
