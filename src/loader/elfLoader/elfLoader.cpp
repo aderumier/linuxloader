@@ -218,6 +218,11 @@ bool ElfLoader::LoadMapAndExport(const std::string &path)
     // (the main executable is always module 1).
     RegisterTlsSegment();
 
+    // The main executable's, before its entry point (Execute): its code is
+    // still the file's until the game is identified (the partial CRC).
+    if (m_IsSharedObject)
+        PatchStackGuardReads();
+
     if (!ExportSymbols())
         return false;
 
@@ -283,6 +288,74 @@ bool ElfLoader::ParseElf(const std::string &path)
 
     log_info("Successfully parsed 32-bit x86 ELF: %s", path.c_str());
     return true;
+}
+
+// The stack protector's canary, glibc's %gs:0x14 (the thread's TCB): there
+// is no Linux %gs on Windows, so the code reads this instead. One value for
+// all threads, as the guard only compares it with its own copy; the low byte
+// zero, as glibc's (it stops string overflows).
+static uint32_t g_StackGuard = 0x5a3c9e00;
+
+// i386 instructions "op reg, gs:[0x14]": gs prefix, opcode, ModRM with a
+// disp32 operand (mod 00, r/m 101), disp32 0x14. mov/add/or/and/sub/xor/cmp.
+static bool IsGuardOpcode(uint8_t op)
+{
+    switch (op)
+    {
+    case 0x8b: // mov r32, r/m32
+    case 0x03: // add
+    case 0x0b: // or
+    case 0x23: // and
+    case 0x2b: // sub
+    case 0x33: // xor
+    case 0x3b: // cmp r32, r/m32
+    case 0x39: // cmp r/m32, r32
+        return true;
+    }
+    return false;
+}
+
+// Rewrites the stack protector's %gs:0x14 reads to g_StackGuard's absolute
+// address, before the code runs. Each one keeps its length: the segment
+// prefix goes, a nop pads the end (jumps land on the instruction's start).
+void ElfLoader::PatchStackGuardReads()
+{
+    const uint32_t guard = (uint32_t)(uintptr_t)&g_StackGuard;
+    size_t patched = 0;
+
+    for (const auto &seg : m_Elfio->segments)
+    {
+        if (seg->get_type() != PT_LOAD || !(seg->get_flags() & PF_X) || seg->get_file_size() < 7)
+            continue;
+        uint8_t *code = reinterpret_cast<uint8_t *>(seg->get_virtual_address() + m_LoadBias);
+        size_t size = (size_t)seg->get_file_size();
+        for (size_t i = 0; i + 7 <= size; i++)
+        {
+            if (code[i] != 0x65)
+                continue;
+            // mov eax, gs:0x14 (moffs32): a1 <addr>, nop
+            if (code[i + 1] == 0xa1 && !memcmp(code + i + 2, "\x14\0\0\0", 4))
+            {
+                code[i] = 0xa1;
+                memcpy(code + i + 1, &guard, 4);
+                code[i + 5] = 0x90;
+                patched++;
+                i += 5;
+            }
+            else if (IsGuardOpcode(code[i + 1]) && (code[i + 2] & 0xc7) == 0x05 &&
+                     !memcmp(code + i + 3, "\x14\0\0\0", 4))
+            {
+                code[i] = code[i + 1];
+                code[i + 1] = code[i + 2];
+                memcpy(code + i + 2, &guard, 4);
+                code[i + 6] = 0x90;
+                patched++;
+                i += 6;
+            }
+        }
+    }
+    if (patched)
+        log_info("Stack protector: %zu %%gs:0x14 reads redirected in %s", patched, m_Path.c_str());
 }
 
 bool ElfLoader::MapSegmentsToMemory()
@@ -1449,6 +1522,7 @@ bool ElfLoader::Execute(int argc, char **argv, char **envp)
     }
 
     log_info("Preparing to execute main ELF...");
+    PatchStackGuardReads();
     Elf64_Addr entryAddr = m_Elfio->get_entry();
     if (entryAddr == 0)
     {
