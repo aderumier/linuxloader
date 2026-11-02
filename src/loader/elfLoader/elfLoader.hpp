@@ -89,6 +89,7 @@ class ElfLoader
 
     ELFIO::elfio *m_Elfio;
     bool m_IsSharedObject = false;
+    bool m_InitRun = false;
     bool m_Relocated = false;
     bool m_Initialized = false;
     std::string m_Path;
