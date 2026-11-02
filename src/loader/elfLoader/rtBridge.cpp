@@ -43,15 +43,6 @@
 
 #define MAP(name, func) SymbolResolver::GetInstance().RegisterVTable(name, reinterpret_cast<void *>(func))
 
-// The Itanium ABI personality, from the exe's statically linked libgcc
-// (libgcc_eh.a's unwind-c): the toolchain's C symbols carry a leading
-// underscore, and MinGW's copy is named with "gcc", not "gxx" like the
-// games' (glibc's) import.
-extern "C" _Unwind_Reason_Code __gcc_personality_v0(int version, _Unwind_Action actions,
-                                                    uint64_t exception_class,
-                                                    _Unwind_Exception *exception_object,
-                                                    struct _unwind_context *context);
-
 // The loader's emulated semaphore (pthreadSemaphore.cpp), as the game's sem_t.
 extern "C" int emuSemTrywait(void *sem);
 
@@ -2111,7 +2102,9 @@ namespace RtBridge
 
     void initBridges()
     {
-        MAP("__gxx_personality_v0", (void *)&__gcc_personality_v0);
+        // No __gxx_personality_v0 here: the game's C++ needs its own
+        // libstdc++'s (the native one), libgcc's C personality only runs
+        // cleanups and never catches (every throw would terminate).
 
         MAP("popen", bridgeRtPopen);
         MAP("system", bridgeRtSystem);
