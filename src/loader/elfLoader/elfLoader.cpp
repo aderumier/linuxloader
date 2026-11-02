@@ -1513,6 +1513,20 @@ bool ElfLoader::ResolveVTables()
     return true;
 }
 
+// Where a main() entry point returns (see Execute): exit with its result.
+extern "C" void ElfMainReturned(void);
+extern "C" void ElfMainExit(int status)
+{
+    log_info("The game's main() returned %d", status);
+    exit(status);
+}
+__asm__(".globl _ElfMainReturned\n"
+        "_ElfMainReturned:\n\t"
+        "and $-16, %esp\n\t"
+        "sub $12, %esp\n\t"
+        "push %eax\n\t"
+        "call _ElfMainExit\n");
+
 bool ElfLoader::Execute(int argc, char **argv, char **envp)
 {
     if (m_IsSharedObject)
@@ -1571,6 +1585,24 @@ bool ElfLoader::Execute(int argc, char **argv, char **envp)
 
     typedef void (*EntryPointFunc)(void);
     EntryPointFunc entry = reinterpret_cast<EntryPointFunc>(actualEntry);
+    // The Raw Thrills dumps' entry is the game's main() (the envelope's
+    // _start is gone): not the i386 _start ("xor %ebp,%ebp"), it is called
+    // as main(argc, argv, envp), returning to exit(). ld.so jumps there with
+    // the process stack, where main reads argv[0]'s address as argc: a stack
+    // address that Linux puts high, so negative, and no argument is parsed.
+    const uint8_t *code = reinterpret_cast<const uint8_t *>(actualEntry);
+    if (!(code[0] == 0x31 && code[1] == 0xed))
+    {
+        uint32_t *process = reinterpret_cast<uint32_t *>(esp);
+        uint32_t mainArgc = process[0];
+        uint32_t *frame = process - 4;
+        frame[0] = (uint32_t)(uintptr_t)ElfMainReturned;
+        frame[1] = mainArgc;
+        frame[2] = (uint32_t)(uintptr_t)(process + 1);
+        frame[3] = (uint32_t)(uintptr_t)(process + 1 + mainArgc + 1);
+        esp = (uint32_t)(uintptr_t)frame;
+        log_info("Entry point is a main(): called with argc %u", mainArgc);
+    }
     log_info("Jumping to entry point %p", entry);
     log_info("Stack ESP: 0x%08X", esp);
 
