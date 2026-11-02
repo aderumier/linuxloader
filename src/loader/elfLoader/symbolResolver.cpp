@@ -321,6 +321,8 @@ void SymbolResolver::LoadNeededLibrary(const std::string &linuxName)
         log_debug("Library is unmapped and not a .dll (%s). Directly routing to native Linux Shared Object loader.", targetName.c_str());
     }
 
+    // By name: the libraries load theirs (recursively) before they are
+    // done, so a name is recorded before its load (see below).
     if (std::find(m_LoadedNativeNames.begin(), m_LoadedNativeNames.end(), targetName) != m_LoadedNativeNames.end())
     {
         log_debug("Linux SO %s is already natively loaded. Skipping.", targetName.c_str());
@@ -360,9 +362,11 @@ void SymbolResolver::LoadNeededLibrary(const std::string &linuxName)
     {
         ElfLoader *soLoader = new ElfLoader();
         soLoader->SetIsSharedObject(true);
+        // One copy of each library, its dependents included (libstdc++,
+        // libfmod: several copies would each have their own globals).
+        m_LoadedNativeNames.push_back(targetName);
         if (soLoader->Load(fullPath))
         {
-            m_LoadedNativeNames.push_back(fullPath);
             m_NativeLoaders.push_back(soLoader);
             log_info("Successfully loaded and exported symbols for native Linux SO: %s", fullPath.c_str());
             m_PendingSOPatches.push_back({(uintptr_t)soLoader->GetBaseAddress(), fullPath});
@@ -370,6 +374,7 @@ void SymbolResolver::LoadNeededLibrary(const std::string &linuxName)
         else
         {
             log_error("Failed to natively load Linux SO: %s", fullPath.c_str());
+            m_LoadedNativeNames.erase(std::find(m_LoadedNativeNames.begin(), m_LoadedNativeNames.end(), targetName));
             delete soLoader;
             soLoader = nullptr;
         }

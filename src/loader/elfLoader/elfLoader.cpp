@@ -1315,6 +1315,10 @@ extern "C" int rtMainWritableCodeSegment(uint32_t *start, uint32_t *end)
 
 bool ElfLoader::RunInit()
 {
+    // Once: RunAllInits runs again for every library the game dlopens.
+    if (m_InitRun)
+        return true;
+    m_InitRun = true;
     log_info("Running initialization for shared object: %s", m_Path.c_str());
 
     for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)

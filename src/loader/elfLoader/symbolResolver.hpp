@@ -92,7 +92,7 @@ class SymbolResolver
     std::vector<void *> m_LoadedLibraries;        // Stores handles to loaded DLLs
     std::vector<ElfLoader *> m_NativeLoaders;     // Stores loaders for purely native Linux shared objects
     std::vector<std::pair<std::string, uint32_t *>> m_MainImports; // The main executable's function imports (name, GOT slot)
-    std::vector<std::string> m_LoadedNativeNames; // Tracks already loaded Linux SO file paths
+    std::vector<std::string> m_LoadedNativeNames; // Already loaded Linux SOs, by file name
     std::vector<std::pair<uintptr_t, std::string>> m_PendingSOPatches; // Deferred SO patches (base, path)
 
     // Library search paths
