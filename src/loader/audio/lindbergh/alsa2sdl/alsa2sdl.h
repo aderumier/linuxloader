@@ -59,6 +59,13 @@ extern "C"
     unsigned long shared_snd_pcm_sw_params_sizeof(void);
     int shared_snd_pcm_nonblock(snd_pcm_t *pcm, int nonblock);
     int shared_snd_pcm_recover(snd_pcm_t *pcm, int err, int silent);
+    const char *shared_snd_asoundlib_version(void);
+    int shared_snd_device_name_hint(int card, const char *iface, void ***hints);
+    char *shared_snd_device_name_get_hint(const void *hint, const char *id);
+    int shared_snd_device_name_free_hint(void **hints);
+    int shared_snd_pcm_hw_params_set_rate(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val, int dir);
+    int shared_snd_pcm_hw_params_test_rate(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val, int dir);
+    snd_pcm_sframes_t shared_snd_pcm_readi(snd_pcm_t *pcm, void *buffer, snd_pcm_uframes_t size);
 
     // PulseAudio: the g6 games link a Pulse client alongside ALSA (on the
     // cabinet Pulse wins); on Windows there is no Pulse, so the calls are
