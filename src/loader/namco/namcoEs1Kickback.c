@@ -22,18 +22,26 @@
 // NAMCO_KB_TRACE set: the board's traffic on stderr.
 
 #include <errno.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/ioctl.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define FIONREAD 0x541b // the Linux value the game passes
+#endif
 #include <time.h>
 
 #include "namcoEs1.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../log/log.h"
+#include "../rawthrills/rawthrills.h"
 
 #define COMMAND_LENGTH 10
 #define MAX_QUEUED 1024
@@ -92,9 +100,13 @@ static const char *stateName(void)
 
 static uint64_t nowMs(void)
 {
+#ifdef _WIN32
+    return rtNowMs();
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
 }
 
 static void traceBytes(const char *what, const unsigned char *b, size_t n)
@@ -325,7 +337,13 @@ int namcoEs1KickbackOpen(int (*realOpen)(const char *, int, ...))
     pthread_mutex_lock(&lock);
     trace = getenv("NAMCO_KB_TRACE") != NULL;
     if (kbFd < 0)
+    {
+#ifdef _WIN32
+        kbFd = realOpen("nul", O_RDWR);
+#else
         kbFd = realOpen("/dev/null", O_RDWR);
+#endif
+    }
     commandLen = replyLen = 0;
     frames = 0;
     reportsUnprompted = g->kickbackReportsUnprompted;

@@ -41,6 +41,7 @@ extern "C"
 #include "memoryManager.hpp"
 #include "glHooks.hpp"
 #include "libcBridge.hpp"
+#include "tlsSupport.hpp"
 #include "loader/redirections/libcShared.h"
 #include "pthread/pthreadEmu.hpp"
 #include "symbolResolver.hpp"
@@ -104,6 +105,12 @@ SymbolResolver::SymbolResolver()
 {
     m_VTables["__gmon_start__"] = reinterpret_cast<void *>(__gmon_start__);
     m_VTables["__libc_start_main"] = reinterpret_cast<void *>(__libc_start_main);
+
+    // i386 ELF TLS (see tlsSupport): the game ELF / its libraries import
+    // either the GNU form (___tls_get_addr, arg in %eax) or the "Sun"
+    // form (__tls_get_addr, arg on the stack). Both point at our core.
+    m_VTables["__tls_get_addr"] = reinterpret_cast<void *>(Tls::__tls_get_addr);
+    m_VTables["___tls_get_addr"] = reinterpret_cast<void *>(Tls::___tls_get_addr);
 
     m_VTables["malloc"] = reinterpret_cast<void *>(MemoryManager::customMalloc);
     m_VTables["mallinfo"] = reinterpret_cast<void *>(MemoryManager::customMallinfo);
@@ -248,8 +255,14 @@ void SymbolResolver::RegisterLibrary(const std::string &linuxName, const std::st
 
 void SymbolResolver::LoadNeededLibrary(const std::string &linuxName)
 {
-    std::string targetName = linuxName;
-    auto it = m_LibraryMap.find(linuxName);
+    // A DT_NEEDED with the cabinet's absolute path (the dumps keep it):
+    // look up and load by the library's name.
+    const char *basename = linuxName.c_str();
+    const char *slash = strrchr(basename, '/');
+    if (slash)
+        basename = slash + 1;
+    std::string targetName = basename;
+    auto it = m_LibraryMap.find(basename);
     bool isMapped = false;
 
     if (it != m_LibraryMap.end())
@@ -383,6 +396,29 @@ void SymbolResolver::RegisterNativeSymbol(const std::string &symbolName, void *s
     }
 }
 
+void SymbolResolver::RecordMainImport(const std::string &symbolName, uint32_t *slot)
+{
+    for (const auto &import : m_MainImports)
+        if (import.first == symbolName)
+            return; // a few games import the same symbol twice
+    m_MainImports.emplace_back(symbolName, slot);
+}
+
+extern "C" int loaderImportSlots(const char **names, uint32_t **slots, int max)
+{
+    const auto &imports = SymbolResolver::GetInstance().MainImports();
+    int count = 0;
+    for (const auto &import : imports)
+    {
+        if (count >= max)
+            break;
+        names[count] = import.first.c_str();
+        slots[count] = import.second;
+        count++;
+    }
+    return count;
+}
+
 extern "C" void HandleUnresolvedSymbol(const char *symbolName, void *callerAddress)
 {
     printf("\n*** FATAL ERROR ***\nUnresolved symbol called: %s\nCaller Address: %p\n*******************\n", symbolName, callerAddress);
@@ -476,6 +512,8 @@ void *SymbolResolver::ResolveSymbol(const std::string &symbolName, std::string *
     if (strncmp(symbolName.c_str(), "_Unwind_", 8) == 0 || symbolName == "__gxx_personality_v0")
     {
         HMODULE hMinGwGcc = GetModuleHandleA("libgcc_s_dw2-1.dll");
+        if (!hMinGwGcc)
+            hMinGwGcc = LoadLibraryA("libgcc_s_dw2-1.dll");
         if (hMinGwGcc)
         {
             void *proc = (void *)GetProcAddress(hMinGwGcc, symbolName.c_str());
@@ -498,62 +536,8 @@ void *SymbolResolver::ResolveSymbol(const std::string &symbolName, std::string *
 
     bool needsOriginal = !resolvedAddr || (m_OriginalSymbolPtrs.find(symbolName) != m_OriginalSymbolPtrs.end());
 
-    if (needsOriginal)
-    {
-        if (!originalAddr)
-        {
-            auto nativeIt = m_NativeSymbols.find(symbolName);
-            if (nativeIt != m_NativeSymbols.end())
-            {
-                if (!resolvedAddr && outModuleName)
-                    *outModuleName = "Native Symbol";
-                originalAddr = nativeIt->second;
-            }
-        }
-
-        if (!originalAddr)
-        {
-            for (void *handle : m_LoadedLibraries)
-            {
-                if (!handle)
-                    continue;
-
-                void *symbolAddr = reinterpret_cast<void *>(GetProcAddress(reinterpret_cast<HMODULE>(handle), symbolName.c_str()));
-                if (symbolAddr)
-                {
-                    char path[MAX_PATH];
-                    if (GetModuleFileNameA(reinterpret_cast<HMODULE>(handle), path, sizeof(path)))
-                    {
-                        char *basename = strrchr(path, '\\');
-                        std::string modName = basename ? basename + 1 : path;
-                        if (!resolvedAddr && outModuleName)
-                            *outModuleName = modName;
-                    }
-                    else if (!resolvedAddr && outModuleName)
-                    {
-                        *outModuleName = "Loaded Library";
-                    }
-                    originalAddr = symbolAddr;
-                    break;
-                }
-            }
-        }
-
-        if (!originalAddr)
-        {
-            if (strncmp(symbolName.c_str(), "gl", 2) == 0)
-            {
-                void *proc = GLHooks_GetProcAddress(symbolName.c_str());
-                if (proc)
-                {
-                    if (!resolvedAddr && outModuleName)
-                        *outModuleName = "GLHooks";
-                    log_trace("Symbol %s resolved from GLHooks at 0x%p", symbolName.c_str(), proc);
-                    originalAddr = proc;
-                }
-            }
-        }
-    }
+    if (needsOriginal && !originalAddr)
+        originalAddr = FindOriginal(symbolName, !resolvedAddr ? outModuleName : nullptr);
 
     auto origPtrIt = m_OriginalSymbolPtrs.find(symbolName);
     if (origPtrIt != m_OriginalSymbolPtrs.end() && originalAddr)
@@ -589,6 +573,78 @@ void *SymbolResolver::GetVTable(const std::string &className)
     return nullptr;
 }
 
+void *SymbolResolver::FindOriginal(const std::string &symbolName, std::string *outModuleName)
+{
+    auto nativeIt = m_NativeSymbols.find(symbolName);
+    if (nativeIt != m_NativeSymbols.end())
+    {
+        if (outModuleName)
+            *outModuleName = "Native Symbol";
+        return nativeIt->second;
+    }
+
+    for (void *handle : m_LoadedLibraries)
+    {
+        if (!handle)
+            continue;
+
+        void *symbolAddr = reinterpret_cast<void *>(GetProcAddress(reinterpret_cast<HMODULE>(handle), symbolName.c_str()));
+        if (symbolAddr)
+        {
+            char path[MAX_PATH];
+            if (GetModuleFileNameA(reinterpret_cast<HMODULE>(handle), path, sizeof(path)))
+            {
+                char *basename = strrchr(path, '\\');
+                std::string modName = basename ? basename + 1 : path;
+                if (outModuleName)
+                    *outModuleName = modName;
+            }
+            else if (outModuleName)
+            {
+                *outModuleName = "Loaded Library";
+            }
+            return symbolAddr;
+        }
+    }
+
+    if (strncmp(symbolName.c_str(), "gl", 2) == 0)
+    {
+        void *proc = GLHooks_GetProcAddress(symbolName.c_str());
+        if (proc)
+        {
+            if (outModuleName)
+                *outModuleName = "GLHooks";
+            log_trace("Symbol %s resolved from GLHooks at 0x%p", symbolName.c_str(), proc);
+            return proc;
+        }
+    }
+
+    return nullptr;
+}
+
+void *SymbolResolver::HookImport(const std::string &symbolName, void *replacement)
+{
+    for (const auto &import : m_MainImports)
+    {
+        if (import.first != symbolName)
+            continue;
+        void *original = *(void **)import.second;
+        *import.second = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(replacement));
+        log_info("Import %s hooked at %p (was %p)", symbolName.c_str(), replacement, original);
+        return original;
+    }
+
+    void *original = FindOriginal(symbolName, nullptr);
+    RegisterVTable(symbolName, replacement);
+    return original;
+}
+
+void *SymbolResolver::FindNativeSymbol(const std::string &symbolName)
+{
+    auto it = m_NativeSymbols.find(symbolName);
+    return it != m_NativeSymbols.end() ? it->second : nullptr;
+}
+
 void SymbolResolver::RegisterVTable(const std::string &className, void *vtablePtr, void **originalSymbolPtr)
 {
     m_VTables[className] = vtablePtr;
@@ -613,6 +669,42 @@ void bridgeLoadNeededLibrary(const char *filename)
     SymbolResolver::GetInstance().ProcessAllRelocations();
     SymbolResolver::GetInstance().PatchAllSOs();
     SymbolResolver::GetInstance().RunAllInits();
+}
+
+void *bridgeGetLoadedLibrary(const char *dllName)
+{
+    return SymbolResolver::GetInstance().GetLoadedLibrary(dllName);
+}
+
+void *bridgeHookImport(const char *symbolName, void *replacement)
+{
+    return SymbolResolver::GetInstance().HookImport(symbolName, replacement);
+}
+
+// The address a natively loaded Linux shared object exports under name, or
+// NULL (namco/namcoN2Csneo.c: the engine's own symbols).
+extern "C" void *bridgeFindNativeSymbol(const char *symbolName)
+{
+    if (!symbolName)
+        return nullptr;
+    return SymbolResolver::GetInstance().FindNativeSymbol(symbolName);
+}
+
+void *SymbolResolver::GetLoadedLibrary(const std::string &dllName)
+{
+    for (void *handle : m_LoadedLibraries)
+    {
+        if (!handle)
+            continue;
+        char path[MAX_PATH];
+        if (GetModuleFileNameA(reinterpret_cast<HMODULE>(handle), path, sizeof(path)))
+        {
+            const char *base = strrchr(path, '\\');
+            if (base && _stricmp(base + 1, dllName.c_str()) == 0)
+                return handle;
+        }
+    }
+    return nullptr;
 }
 
 bool SymbolResolver::ProcessAllRelocations()

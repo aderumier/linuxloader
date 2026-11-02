@@ -11,13 +11,10 @@
 //    that state is fed each frame to the engine's I/O slots, where the
 //    cabinet board's inputs arrive.
 
-#include <dlfcn.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "rawthrills.h"
 #include "../common/desktopInput.h"
@@ -212,9 +209,7 @@ typedef struct
 
 static uint64_t nowMs(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return rtNowMs();
 }
 
 static int coinPulseState(CoinPulse *p, int count)
@@ -635,9 +630,7 @@ static uint32_t rioTransitions[RIO_SWITCHES];
 static int rioLoopHook(int dt)
 {
     int ret = rioLoopOrig(dt), changed = 0;
-    struct timespec now;
-
-    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint32_t now = rtNowMs();
     for (const RtIoInput *in = currentGame->rioSwitches; in->type != RT_IO_END; in++)
     {
         int sw = in->io;
@@ -650,7 +643,7 @@ static int rioLoopHook(int dt)
         if (held != (int)(rioTransitions[sw] & 1))
         {
             rioTransitions[sw]++;
-            rioEvent(sw, 3, rioTransitions[sw], (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000));
+            rioEvent(sw, 3, rioTransitions[sw], now);
             changed = 1;
         }
     }
@@ -828,8 +821,10 @@ void rtInstallInput(const RtGame *game)
             installEvdevInput(game);
         inputAddMapOrig = rtTrampoline("InputAddMap", game->inputAddMapPrologue);
         inputAddMap = inputAddMapOrig;
-        if (!inputAddMapOrig || rtDetour("InputAddMap", inputAddMapHook) != 0)
-            log_error("Raw Thrills: input hooks not installed");
+        if (!inputAddMapOrig)
+            log_error("Raw Thrills: input hooks not installed: InputAddMap not found");
+        else if (rtDetour("InputAddMap", inputAddMapHook) != 0)
+            log_error("Raw Thrills: input hooks not installed: the InputAddMap hook failed");
         return;
     }
     // Games whose input map needs nothing added or dropped (Pink Panther
@@ -846,7 +841,10 @@ void rtInstallInput(const RtGame *game)
     gameInputMapsOrig = rtTrampoline(gameInputMapsSymbol, game->gameInputMapsPrologue);
     if (!inputAddMap || !gameInputMapsOrig)
     {
-        log_error("Raw Thrills: input hooks not installed");
+        if (!inputAddMap)
+            log_error("Raw Thrills: input hooks not installed: InputAddMap not found in the game's symbols");
+        if (!gameInputMapsOrig)
+            log_error("Raw Thrills: input hooks not installed: %s not found in the game's symbols", gameInputMapsSymbol);
         return;
     }
     rtDetour(gameInputMapsSymbol, gameInputMaps);

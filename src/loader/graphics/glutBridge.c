@@ -4,6 +4,9 @@
 #define __i386__
 #endif
 #undef __x86_64__
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #ifdef __linux__
 #include <GL/freeglut.h>
 #endif
@@ -208,6 +211,26 @@ void bridgeGlutKeyboardFunc(void (*callback)(unsigned char, int, int))
 
 void bridgeGlutKeyboardUpFunc(void (*callback)(unsigned char, int, int))
 {
+}
+
+// GLUT_ACTIVE_SHIFT (1) and GLUT_ACTIVE_CTRL (2), as freeglut reports them.
+int bridgeGlutGetModifiers(void)
+{
+#ifdef _WIN32
+    int m = 0;
+    if (GetKeyState(VK_SHIFT) & 0x8000)
+        m |= 1;
+    if (GetKeyState(VK_CONTROL) & 0x8000)
+        m |= 2;
+    return m;
+#else
+    return 0;
+#endif
+}
+
+void bridgeGlutIgnoreKeyRepeat(int repeat)
+{
+    (void)repeat;
 }
 
 void bridgeGlutMouseFunc(void (*callback)(int, int, int, int))

@@ -24,7 +24,9 @@
 // succeeds with the wheel of this build, NJS (4), and the setup's choice is
 // kept in memory.
 
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include <glad/gl.h>
 #include <signal.h>
 #include <stdint.h>
@@ -92,7 +94,7 @@ static volatile uint32_t held;
 // whether it is shown, and when it last moved.
 static float aimX = 0.5f, aimY = 0.5f;
 static int aimShown;
-static struct timespec aimMoved;
+static uint32_t aimMovedMs;
 #define AIM_HIDE_S 5
 
 static int nearestCase(float x, float y)
@@ -120,7 +122,7 @@ static void aimAt(float x, float y)
     aimX = x;
     aimY = y;
     aimShown = 1;
-    clock_gettime(CLOCK_MONOTONIC, &aimMoved);
+    aimMovedMs = rtNowMs();
 }
 
 // Each frame (the JAMMA board's poll): the crosshair, and the switches the
@@ -205,12 +207,10 @@ static void fillRect(int x, int y, int w, int h, float grey)
 
 void rtDondFrameDraw(int x, int y, int width, int height)
 {
-    struct timespec now;
     GLfloat clearColour[4];
     GLint scissorBox[4];
 
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    if (!aimShown || now.tv_sec - aimMoved.tv_sec > AIM_HIDE_S)
+    if (!aimShown || (uint32_t)(rtNowMs() - aimMovedMs) > AIM_HIDE_S * 1000u)
         return;
     int cx = x + (int)(aimX * width), cy = y + (int)((1 - aimY) * height);
     int arm = height / 30, thick = height / 300 > 1 ? height / 300 : 1, edge = thick > 1 ? thick : 1;
@@ -269,18 +269,31 @@ typedef void (*SignalHandler)(int);
 
 static SignalHandler gameSignal(int signum, SignalHandler handler)
 {
+#ifdef _WIN32
+    if (signum == SIGSEGV)
+        return SIG_DFL;
+    return signal(signum, handler);
+#else
     SignalHandler (*real)(int, SignalHandler) = dlsym(RTLD_NEXT, "signal");
     if (signum == SIGSEGV)
         return SIG_DFL;
     return real(signum, handler);
+#endif
 }
 
 static int gameSigaction(int signum, const struct sigaction *act, struct sigaction *old)
 {
+#ifdef _WIN32
+    (void)signum;
+    (void)act;
+    (void)old;
+    return 0;
+#else
     int (*real)(int, const struct sigaction *, struct sigaction *) = dlsym(RTLD_NEXT, "sigaction");
     if (signum == SIGSEGV && act)
         return 0;
     return real(signum, act, old);
+#endif
 }
 
 #define DLX_WHEEL_NJS 4

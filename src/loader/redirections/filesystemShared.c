@@ -31,9 +31,11 @@
 #include "../rawthrills/rawthrills.h"
 #include "../common/ossDsp.h"
 #include "../common/webcam.h"
+#include "../globalvr/gvr.h"
+#endif
+#if defined(__linux__) || defined(_WIN32)
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
-#include "../globalvr/gvr.h"
 #endif
 #include "../common/gamePath.h"
 #include "../teamplay/teamplay.h"
@@ -58,6 +60,8 @@
 #include <iphlpapi.h>
 #include <fcntl.h>
 #include <io.h>
+// The Linux constant the (Linux-built) game passes to ioctl().
+#define SIOCGIFHWADDR 0x8927
 #define REAL_FUNC(name) name
 #endif
 
@@ -256,6 +260,16 @@ int sharedOpen(const char *pathname, int flags, ...)
     // Teamplay: the MegaJamma board.
     if (teamplayMjIsPath(pathname))
         return teamplayMjOpen(_open);
+#ifdef _WIN32
+    // Namco: the JVS I/O board's serial port, the steering boards (the
+    // cabinet's, emulated; the game's opens of them never reach the disk).
+    if (pathname && namcoEs1JvsIsPath(pathname))
+        return namcoEs1JvsOpen(_open);
+    if (pathname && namcoEs1KickbackIsPath(pathname))
+        return namcoEs1KickbackOpen(_open);
+    if (pathname && namcoN2KickbackIsPath(pathname))
+        return namcoN2KickbackOpen(_open);
+#endif
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
 
@@ -747,6 +761,14 @@ int sharedClose(int fd)
 #endif
     if (teamplayMjIsFd(fd))
         teamplayMjClose();
+#ifdef _WIN32
+    if (namcoEs1JvsIsFd(fd))
+        namcoEs1JvsClose();
+    if (namcoEs1KickbackIsFd(fd))
+        namcoEs1KickbackClose();
+    if (namcoN2KickbackIsFd(fd))
+        namcoN2KickbackClose();
+#endif
 
 
     for (size_t i = 0; i < (sizeof hooks / sizeof hooks[0]); i++)
@@ -814,6 +836,14 @@ ssize_t sharedRead(int fd, void *buf, size_t count)
 #endif
     if (teamplayMjIsFd(fd))
         return teamplayMjRead(buf, count);
+#ifdef _WIN32
+    if (namcoEs1JvsIsFd(fd))
+        return namcoEs1JvsRead(buf, count);
+    if (namcoEs1KickbackIsFd(fd))
+        return namcoEs1KickbackRead(buf, count);
+    if (namcoN2KickbackIsFd(fd))
+        return namcoN2KickbackRead(buf, count);
+#endif
 
     if (fd == (int)hooks[BASEBOARD])
     {
@@ -989,6 +1019,14 @@ ssize_t sharedWrite(int fd, const void *buf, size_t count)
     if (namcoN2KickbackIsFd(fd))
         return namcoN2KickbackWrite(buf, count);
 #endif
+#ifdef _WIN32
+    if (namcoEs1JvsIsFd(fd))
+        return namcoEs1JvsWrite(buf, count);
+    if (namcoEs1KickbackIsFd(fd))
+        return namcoEs1KickbackWrite(buf, count);
+    if (namcoN2KickbackIsFd(fd))
+        return namcoN2KickbackWrite(buf, count);
+#endif
 
     // void *addr = __builtin_return_address(0);
     if (fd == (int)hooks[BASEBOARD])
@@ -1060,6 +1098,20 @@ int sharedIoctl(int fd, unsigned long int request, ...)
             return 0;
         return r;
     }
+    // The Namco ES1 camera driver crops the cabinet camera's picture; a
+    // webcam may not crop (VIDIOC_S_CROP), and the picture is used whole.
+    if (request == 0x4014563c && isNamcoEs1Game())
+        return 0;
+#endif
+#ifdef _WIN32
+    if (namcoEs1JvsIsFd(fd))
+        return namcoEs1JvsIoctl(request, argp);
+    if (namcoEs1KickbackIsFd(fd))
+        return namcoEs1KickbackIoctl(request, argp);
+    if (namcoN2KickbackIsFd(fd))
+        return namcoN2KickbackIoctl(request, argp);
+    if (request == SIOCGIFHWADDR && isNamcoEs1Game())
+        return namcoEs1HwAddr(fd, argp, NULL);
     // The Namco ES1 camera driver crops the cabinet camera's picture; a
     // webcam may not crop (VIDIOC_S_CROP), and the picture is used whole.
     if (request == 0x4014563c && isNamcoEs1Game())

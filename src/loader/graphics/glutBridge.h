@@ -27,6 +27,8 @@ extern "C"
     void bridgeGlutPostRedisplay(void);
     void bridgeGlutKeyboardFunc(void (*callback)(unsigned char, int, int));
     void bridgeGlutKeyboardUpFunc(void (*callback)(unsigned char, int, int));
+    int bridgeGlutGetModifiers(void);
+    void bridgeGlutIgnoreKeyRepeat(int repeat);
     void bridgeGlutMouseFunc(void (*callback)(int, int, int, int));
     void bridgeGlutMotionFunc(void (*callback)(int, int));
     void bridgeGlutSpecialFunc(void (*callback)(int, int, int));

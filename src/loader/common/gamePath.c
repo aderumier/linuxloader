@@ -10,13 +10,14 @@
 
 #include "gamePath.h"
 #include "../teamplay/teamplay.h"
-#ifdef __linux__
-#include <dlfcn.h>
+// Compiled on both hosts (see the ports): only Global VR is Linux-only.
 #include "../rawthrills/rawthrills.h"
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
-#include "../globalvr/gvr.h"
 #include "../roxor/roxor.h"
+#ifdef __linux__
+#include <dlfcn.h>
+#include "../globalvr/gvr.h"
 #endif
 
 // The running game's cabinet paths mapped to their host location, by its
@@ -27,22 +28,20 @@ const char *gameRedirectPath(const char *path, char *buf, size_t size)
 {
     if (!path)
         return path;
-#ifdef __linux__
     if (isRawThrillsGame())
         return rtRedirectPath(path, buf, size);
-#endif
     if (isTeamplayGame())
         return teamplayRedirectPath(path, buf, size);
 #ifdef __linux__
     if (isGvrGame())
         return gvrRedirectPath(path, buf, size);
+#endif
     if (isRoxorGame())
         return roxorRedirectPath(path, buf, size);
     if (isNamcoEs1Game())
         return namcoEs1RedirectPath(path, buf, size);
     if (isNamcoN2Game())
         return namcoN2RedirectPath(path, buf, size);
-#endif
     return path;
 }
 

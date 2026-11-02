@@ -163,6 +163,96 @@ namespace GraphicsBridge
 
         MAP("XAllocWMHints", bridgeXAllocWMHints);
 
+        // g6 (Angry Birds / The Walking Dead) + Pac-Man's fuller X11 client.
+        // Two of these (XCheckTypedEvent, XSelectInput) were already implemented,
+        // just never registered.
+        MAP("XCheckTypedEvent", bridgeXCheckTypedEvent);
+        MAP("XSelectInput", bridgeXSelectInput);
+        MAP("XDefaultScreen", bridgeXDefaultScreen);
+        MAP("XDisplayName", bridgeXDisplayName);
+        MAP("XQueryExtension", bridgeXQueryExtension);
+        MAP("XMissingExtension", bridgeXMissingExtension);
+        MAP("XEventsQueued", bridgeXEventsQueued);
+        MAP("XPeekEvent", bridgeXPeekEvent);
+        MAP("XMaskEvent", bridgeXMaskEvent);
+        MAP("XCreateSimpleWindow", bridgeXCreateSimpleWindow);
+        MAP("XRaiseWindow", bridgeXRaiseWindow);
+        MAP("XIconifyWindow", bridgeXIconifyWindow);
+        MAP("XMoveResizeWindow", bridgeXMoveResizeWindow);
+        MAP("XReparentWindow", bridgeXReparentWindow);
+        MAP("XClearWindow", bridgeXClearWindow);
+        MAP("XInstallColormap", bridgeXInstallColormap);
+        MAP("XSetWindowBackground", bridgeXSetWindowBackground);
+        MAP("XSetWindowBackgroundPixmap", bridgeXSetWindowBackgroundPixmap);
+        MAP("XSetWindowColormap", bridgeXSetWindowColormap);
+        MAP("XResetScreenSaver", bridgeXResetScreenSaver);
+        MAP("XChangePointerControl", bridgeXChangePointerControl);
+        MAP("XGetPointerControl", bridgeXGetPointerControl);
+        MAP("XGetVisualInfo", bridgeXGetVisualInfo);
+        MAP("XMatchVisualInfo", bridgeXMatchVisualInfo);
+        MAP("XVisualIDFromVisual", bridgeXVisualIDFromVisual);
+        MAP("XCreateGC", bridgeXCreateGC);
+        MAP("XFreeGC", bridgeXFreeGC);
+        MAP("XCreatePixmap", bridgeXCreatePixmap);
+        MAP("XCreateImage", bridgeXCreateImage);
+        MAP("XPutImage", bridgeXPutImage);
+        MAP("XListPixmapFormats", bridgeXListPixmapFormats);
+        MAP("XShmQueryExtension", bridgeXShmQueryExtension);
+        MAP("XShmAttach", bridgeXShmAttach);
+        MAP("XShmDetach", bridgeXShmDetach);
+        MAP("XShmCreateImage", bridgeXShmCreateImage);
+        MAP("XShmPutImage", bridgeXShmPutImage);
+        MAP("XKeycodeToKeysym", bridgeXKeycodeToKeysym);
+        MAP("XQueryKeymap", bridgeXQueryKeymap);
+        MAP("XRefreshKeyboardMapping", bridgeXRefreshKeyboardMapping);
+        MAP("XGetModifierMapping", bridgeXGetModifierMapping);
+        MAP("XFreeModifiermap", bridgeXFreeModifiermap);
+        MAP("XAllocColor", bridgeXAllocColor);
+        MAP("XFreeColors", bridgeXFreeColors);
+        MAP("XQueryColors", bridgeXQueryColors);
+        MAP("XStoreColors", bridgeXStoreColors);
+        MAP("XAllocClassHint", bridgeXAllocClassHint);
+        MAP("XAllocSizeHints", bridgeXAllocSizeHints);
+        MAP("XSetClassHint", bridgeXSetClassHint);
+        MAP("XSetWMHints", bridgeXSetWMHints);
+        MAP("XGetWMHints", bridgeXGetWMHints);
+        MAP("XSetTextProperty", bridgeXSetTextProperty);
+        MAP("XDeleteProperty", bridgeXDeleteProperty);
+        MAP("Xutf8TextListToTextProperty", bridgeXutf8TextListToTextProperty);
+        MAP("Xutf8LookupString", bridgeXutf8LookupString);
+        MAP("XSetIOErrorHandler", bridgeXSetIOErrorHandler);
+        MAP("XGetErrorDatabaseText", bridgeXGetErrorDatabaseText);
+        MAP("XextAddDisplay", bridgeXextAddDisplay);
+        MAP("XextCreateExtension", bridgeXextCreateExtension);
+        MAP("XextDestroyExtension", bridgeXextDestroyExtension);
+        MAP("XextRemoveDisplay", bridgeXextRemoveDisplay);
+        MAP("XSetExtensionErrorHandler", bridgeXSetExtensionErrorHandler);
+        MAP("XESetEventToWire", bridgeXESetEventToWire);
+        MAP("XESetWireToEvent", bridgeXESetWireToEvent);
+        MAP("_XEatData", bridge_XEatData);
+        MAP("_XGetRequest", bridge_XGetRequest);
+        MAP("_XSend", bridge_XSend);
+        MAP("_XRead", bridge_XRead);
+        MAP("_XReadPad", bridge_XReadPad);
+        MAP("_XSetLastRequestRead", bridge_XSetLastRequestRead);
+        MAP("_XFlushGCCache", bridge_XFlushGCCache);
+        MAP("XOpenIM", bridgeXOpenIM);
+        MAP("XCloseIM", bridgeXCloseIM);
+        MAP("XCreateIC", bridgeXCreateIC);
+        MAP("XDestroyIC", bridgeXDestroyIC);
+        MAP("XGetICValues", bridgeXGetICValues);
+        MAP("XSetICFocus", bridgeXSetICFocus);
+        MAP("XUnsetICFocus", bridgeXUnsetICFocus);
+        MAP("XDisplayOfIM", bridgeXDisplayOfIM);
+        MAP("XSetLocaleModifiers", bridgeXSetLocaleModifiers);
+        MAP("XFilterEvent", bridgeXFilterEvent);
+        MAP("XRRQueryVersion", bridgeXRRQueryVersion);
+        MAP("XRRGetScreenInfo", bridgeXRRGetScreenInfo);
+        MAP("XRRFreeScreenConfigInfo", bridgeXRRFreeScreenConfigInfo);
+        MAP("XRRSetScreenConfig", bridgeXRRSetScreenConfig);
+        MAP("XRRConfigCurrentConfiguration", bridgeXRRConfigCurrentConfiguration);
+        MAP("XRRConfigSizes", bridgeXRRConfigSizes);
+
         // ============================================================
         // GLX Functions
         // ============================================================

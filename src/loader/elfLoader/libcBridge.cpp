@@ -9,9 +9,13 @@
 #include <csignal>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <setjmp.h>
+#include <direct.h>
 #include <process.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/utime.h>
 #include <wctype.h>
@@ -46,6 +50,31 @@ namespace LibcBridge
     FILE *native_stdout = stdout;
     FILE *native_stderr = stderr;
 
+    // environ as a data symbol: the games import the address of the
+    // "char **" variable (they dereference it to the vector), as glibc
+    // exposes it, not its value.
+    char **native_environ = environ;
+
+#ifdef _WIN32
+    // Temporary: the Roxor (Tux Racer) Windows boot trace, unbuffered,
+    // only with ROXOR_TRACE set.
+    static void roxorTrace(char c)
+    {
+        static int enabled = -1;
+
+        if (enabled < 0)
+            enabled = getenv("ROXOR_TRACE") != 0;
+        if (!enabled)
+            return;
+        FILE *f = fopen("roxor_trace.log", "a");
+        if (f)
+        {
+            fputc(c, f);
+            fclose(f);
+        }
+    }
+#endif
+
     void initBridges()
     {
         log_info("Initializing Libc Bridges...");
@@ -69,6 +98,10 @@ namespace LibcBridge
         MAP("stdout", &native_stdout);
         MAP("stderr", &native_stderr);
 
+        // The CRT's environment (glibc's environ the game reads as data:
+        // its Tcl's env array's).
+        MAP("environ", &native_environ);
+
         // some static libraries refer to glibc's internal IO structs
         MAP("_IO_2_1_stdin_", stdin);
         MAP("_IO_2_1_stdout_", stdout);
@@ -87,6 +120,8 @@ namespace LibcBridge
         MAP("clock_gettime", bridgeClockGettime);
         MAP("mktime", bridgeMktime);
         MAP("gmtime_r", bridgeGmtime_R);
+        MAP("gmtime", gmtime);
+        MAP("asctime", asctime);
         MAP("strftime", bridgeStrftime);
         MAP("ftime", bridgeFtime);
 
@@ -126,6 +161,37 @@ namespace LibcBridge
         // Stubs
         MAP("sysctl", bridgeSysctl);
         MAP("iopl", bridgeStubSuccess);
+        MAP("ioperm", bridgeStubSuccess);
+        MAP("setrlimit", bridgeSetrlimit);
+        MAP("getpwuid", bridgeGetpwuid);
+        MAP("getpwnam", bridgeGetpwnam);
+        MAP("getgrnam", bridgeGetgrnam);
+        MAP("getgrgid", bridgeGetgrgid);
+        MAP("endpwent", bridgeEndpwent);
+        MAP("endgrent", bridgeEndgrent);
+        MAP("geteuid", bridgeGeteuid);
+        MAP("uname", bridgeUname);
+        MAP("execl", bridgeExecl);
+        MAP("execvp", bridgeExecvp);
+        MAP("chown", bridgeChown);
+        MAP("dup2", bridgeDup2);
+        MAP("symlink", bridgeSymlink);
+        MAP("mkfifo", bridgeMkfifo);
+        MAP("tmpnam", tmpnam);
+        MAP("umask", umask);
+        MAP("freopen", freopen);
+        MAP("pipe", _pipe);
+        MAP("rmdir", rmdir);
+        MAP("strtoul", strtoul);
+
+        // glibc's FORTIFY (the _chk variants the game's gcc emits: the
+        // flag's and the destination's size's, the compile time only's,
+        // dropped).
+        MAP("__snprintf_chk", bridgeSnprintfChk);
+        MAP("__fprintf_chk", bridgeFprintfChk);
+        MAP("__memcpy_chk", bridgeMemcpyChk);
+        MAP("__longjmp_chk", bridgeLongjmpChk);
+        MAP("__stack_chk_fail", bridgeStackChkFail);
 
         // From other loader
         MAP("__divdi3", __divdi3);
@@ -135,6 +201,8 @@ namespace LibcBridge
         MAP("__fixunsdfdi", __fixunsdfdi);
         MAP("__fixunssfdi", __fixunssfdi);
         MAP("_setjmp", bridgeSetjmp);
+        MAP("setjmp", bridgeSetjmp);
+        MAP("longjmp", bridgeLongjmp);
 
         // system
         MAP("system", bridgeSystem);
@@ -159,7 +227,7 @@ namespace LibcBridge
         MAP("rand", rand);
         MAP("random", rand);
         MAP("rand_r", bridgeRand_r);
-        MAP("srand", srand);
+        MAP("srand", bridgeSrandTraced);
         MAP("signal", bridgeSignal);
         MAP("raise", bridgeRaise);
         MAP("sigfillset", bridgeSigfillset);
@@ -237,10 +305,15 @@ namespace LibcBridge
         MAP("fputwc", bridgePutwc);
     }
 
+    // The jmp_buf (six words) as the imported setjmp writes it and the two
+    // longjmp variants read it: [ebx, esi, edi, ebp, post-return ESP,
+    // return PC]. The return PC is saved, not taken from the stack: a plain
+    // ret would re-read the return-address slot setjmp's caller overwrote as
+    // soon as it made its next call.
     int __attribute__((naked)) bridgeSetjmp(int *env)
     {
         asm volatile("mov 4(%esp), %edx\n\t"
-                     "mov %ebx, (%edx)\n\t"
+                     "mov %ebx, 0(%edx)\n\t"
                      "mov %esi, 4(%edx)\n\t"
                      "mov %edi, 8(%edx)\n\t"
                      "mov %ebp, 12(%edx)\n\t"
@@ -250,6 +323,25 @@ namespace LibcBridge
                      "mov %eax, 20(%edx)\n\t"
                      "xor %eax, %eax\n\t"
                      "ret\n\t");
+    }
+
+    // Restores the layout above and jumps to the saved PC (the caller's
+    // stack is left exactly as it was once setjmp returned).
+    void __attribute__((naked)) bridgeLongjmp(int *env, int val)
+    {
+        asm volatile("mov 4(%esp), %edx\n\t"
+                     "mov 8(%esp), %eax\n\t"
+                     "mov (%edx), %ebx\n\t"
+                     "mov 4(%edx), %esi\n\t"
+                     "mov 8(%edx), %edi\n\t"
+                     "mov 12(%edx), %ebp\n\t"
+                     "mov 16(%edx), %esp\n\t"
+                     "test %eax, %eax\n\t"
+                     "jnz 1f\n\t"
+                     "mov $1, %eax\n\t"
+                     "1:\n\t"
+                     "mov 20(%edx), %ecx\n\t"
+                     "jmp *%ecx\n\t");
     }
 
     void bridgeAbort()
@@ -715,9 +807,20 @@ namespace LibcBridge
         return *n ? FNM_NOMATCH : 0;
     }
 
+    void bridgeSrandTraced(unsigned int seed)
+    {
+#ifdef _WIN32
+        roxorTrace('d');
+#endif
+        srand(seed);
+    }
+
     int32_t bridgeTime(int32_t *tloc)
     {
         log_trace("Intercepted time");
+#ifdef _WIN32
+        roxorTrace('T');
+#endif
         time_t t = time(NULL);
         if (tloc)
         {
@@ -909,6 +1012,202 @@ namespace LibcBridge
     {
         log_trace("Intercepted stub success");
         return 0;
+    }
+
+    // The cabinet's user (the Roxor games' $HOME: their saves and options
+    // are in it, and the loader's redirections move them to the game's
+    // directory): glibc's struct passwd, as the game's compiler laid it
+    // out (i386).
+    struct passwd
+    {
+        char *pw_name;
+        char *pw_passwd;
+        unsigned int pw_uid;
+        unsigned int pw_gid;
+        char *pw_gecos;
+        char *pw_dir;
+        char *pw_shell;
+    };
+
+    static struct passwd g_passwd = {
+        "tux", "x", 0, 0, "Tux Racer", "/tux", "/bin/sh",
+    };
+
+    struct passwd *bridgeGetpwuid(unsigned int uid)
+    {
+        (void)uid;
+        return &g_passwd;
+    }
+
+    // The cabinet's kernel.
+    int bridgeUname(void *name)
+    {
+        char u[65 * 6];
+        if (!name)
+            return -1;
+        memset(u, 0, sizeof(u));
+        strcpy(u + 0 * 65, "Linux");
+        strcpy(u + 1 * 65, "tux");
+        strcpy(u + 2 * 65, "2.4.20");
+        strcpy(u + 3 * 65, "#1");
+        strcpy(u + 4 * 65, "i686");
+        strcpy(u + 5 * 65, "(none)");
+        memcpy(name, u, sizeof(u));
+        return 0;
+    }
+
+    int bridgeSetrlimit(int resource, const void *rlim)
+    {
+        (void)resource;
+        (void)rlim;
+        log_trace("Intercepted setrlimit");
+#ifdef _WIN32
+        if (resource == 6 || resource == 7)
+            roxorTrace(resource == 6 ? 'R' : 'S');
+#endif
+        return 0;
+    }
+
+    int bridgeExecl(const char *path, const char *arg, ...)
+    {
+        log_warn("execl(\"%s\", \"%s\", ...) in a game: not run", path, arg);
+        return -1;
+    }
+
+    int bridgeExecvp(const char *file, const char *const *argv)
+    {
+        (void)argv;
+        log_warn("execvp(\"%s\", ...) in a game: not run", file);
+        return -1;
+    }
+
+    int bridgeGeteuid(void)
+    {
+        log_info("Intercepted geteuid");
+        return 0;
+    }
+
+    struct passwd *bridgeGetpwnam(const char *name)
+    {
+        (void)name;
+        return &g_passwd;
+    }
+
+    // The cabinet's group (glibc's struct group, i386's layout's).
+    struct group
+    {
+        char *gr_name;
+        char *gr_passwd;
+        unsigned int gr_gid;
+        char **gr_mem;
+    };
+
+    static struct group g_group = { "tux", "x", 0, NULL };
+
+    struct group *bridgeGetgrnam(const char *name)
+    {
+        (void)name;
+        return &g_group;
+    }
+
+    struct group *bridgeGetgrgid(unsigned int gid)
+    {
+        (void)gid;
+        return &g_group;
+    }
+
+    void bridgeEndpwent(void)
+    {
+    }
+
+    void bridgeEndgrent(void)
+    {
+    }
+
+    int bridgeChown(const char *path, unsigned int uid, unsigned int gid)
+    {
+        (void)path;
+        (void)uid;
+        (void)gid;
+        return 0;
+    }
+
+    int bridgeDup2(int oldfd, int newfd)
+    {
+        (void)oldfd;
+        (void)newfd;
+        return -1;
+    }
+
+    int bridgeSymlink(const char *target, const char *linkpath)
+    {
+        (void)target;
+        (void)linkpath;
+        return -1;
+    }
+
+    int bridgeMkfifo(const char *path, int mode)
+    {
+        (void)path;
+        (void)mode;
+        return -1;
+    }
+
+    // glibc's FORTIFY: the game's gcc's _chk variants.
+    // glibc's __snprintf_chk: (dest, n, flag, destlen, format, ...).
+    int bridgeSnprintfChk(char *s, size_t n, int flag, size_t destlen, const char *format, ...)
+    {
+        va_list args;
+        int ret;
+
+        (void)flag;
+        (void)destlen;
+        va_start(args, format);
+        ret = vsnprintf(s, n, format, args);
+        va_end(args);
+        return ret;
+    }
+
+    int bridgeFprintfChk(FILE *stream, int flag, const char *format, ...)
+    {
+        va_list args;
+        int ret;
+
+        (void)flag;
+        va_start(args, format);
+        ret = vfprintf(stream, format, args);
+        va_end(args);
+        return ret;
+    }
+
+    void *bridgeMemcpyChk(void *dest, const void *src, size_t n, size_t destsz)
+    {
+        (void)destsz;
+        return memcpy(dest, src, n);
+    }
+
+    // Pairs with bridgeSetjmp's jmp_buf layout (see there).
+    void __attribute__((naked)) bridgeLongjmpChk(void *env, int val)
+    {
+        asm volatile("mov 4(%esp), %edx\n\t"
+                     "mov 8(%esp), %eax\n\t"
+                     "mov (%edx), %ebx\n\t"
+                     "mov 4(%edx), %esi\n\t"
+                     "mov 8(%edx), %edi\n\t"
+                     "mov 12(%edx), %ebp\n\t"
+                     "mov 16(%edx), %esp\n\t"
+                     "test %eax, %eax\n\t"
+                     "jnz 1f\n\t"
+                     "mov $1, %eax\n\t"
+                     "1:\n\t"
+                     "mov 20(%edx), %ecx\n\t"
+                     "jmp *%ecx\n\t");
+    }
+
+    void bridgeStackChkFail(void)
+    {
+        log_fatal("stack smashing detected (__stack_chk_fail)");
+        ::abort();
     }
 
     int bridgeSystem(const char *command)

@@ -540,6 +540,522 @@ int bridgeXFreeColormap(Display *dpy, Colormap colormap)
 {
     return 1;
 }
+
+// ------------------------------------------------------------------
+// The rest of the X11 client the g6 games (Angry Birds, The Walking
+// Dead) and Pac-Man pull in: windowing, the 2D path (GC/pixmap/SHM),
+// the keyboard, colours, WM hints, and the X ext/xi/im/randr protocol
+// internals. Fakes, as the display above -- enough not to hit the crash
+// stub; the real draw and input go through the loader's GL and desktop.
+
+int bridgeXDefaultScreen(Display *dpy)
+{
+    return 0;
+}
+
+char *bridgeXDisplayName(Display *dpy)
+{
+    static const char *n = "WIN32";
+    return (char *)n;
+}
+
+int bridgeXQueryExtension(Display *dpy, const char *name, int *evenbase, int *errbase)
+{
+    if (evenbase)
+        *evenbase = 1;
+    if (errbase)
+        *errbase = 128;
+    return 1;
+}
+
+int bridgeXMissingExtension(Display *dpy, int *evenbase, int *errbase)
+{
+    return 0;
+}
+
+// Event queue: the loader feeds the game's input elsewhere, so the X
+// queue is always empty.
+int bridgeXEventsQueued(Display *dpy, int mode)
+{
+    return 0;
+}
+
+int bridgeXPeekEvent(Display *dpy, XEvent *event_return)
+{
+    return 0;
+}
+
+int bridgeXMaskEvent(Display *dpy, long event_mask, int event_type)
+{
+    return 0;
+}
+
+Window bridgeXCreateSimpleWindow(Display *dpy, Window parent, int x, int y, unsigned int width, unsigned int height,
+                                 unsigned int border_width, unsigned long border_pixel, unsigned long background_pixel)
+{
+    if (!getSDLWindow())
+        startSDL();
+    return (Window)getSDLWindow();
+}
+
+int bridgeXRaiseWindow(Display *dpy, Window w)
+{
+    return 1;
+}
+
+int bridgeXIconifyWindow(Display *dpy, Window w, int level)
+{
+    return 1;
+}
+
+int bridgeXMoveResizeWindow(Display *dpy, Window w, int x, int y, unsigned int width, unsigned int height)
+{
+    return 1;
+}
+
+int bridgeXReparentWindow(Display *dpy, Window w, Window parent, int x, int y)
+{
+    return 1;
+}
+
+int bridgeXClearWindow(Display *dpy, Window w)
+{
+    return 1;
+}
+
+int bridgeXInstallColormap(Display *dpy, Colormap colormap)
+{
+    return 1;
+}
+
+int bridgeXSetWindowBackground(Display *dpy, Window w, unsigned long pixel)
+{
+    return 1;
+}
+
+int bridgeXSetWindowBackgroundPixmap(Display *dpy, Window w, Pixmap pixmap)
+{
+    return 1;
+}
+
+int bridgeXSetWindowColormap(Display *dpy, Window w, Colormap colormap)
+{
+    return 1;
+}
+
+int bridgeXResetScreenSaver(Display *dpy)
+{
+    return 1;
+}
+
+int bridgeXChangePointerControl(Display *dpy, int mouse_gain, int mouse_speed, int min_denom, int max_denom, int threshold)
+{
+    return 1;
+}
+
+// The real Xlib reports the acceleration: numerator, denominator, threshold.
+int bridgeXGetPointerControl(Display *dpy, int *accel_numerator_ret, int *accel_denominator_ret, int *threshold_ret)
+{
+    if (accel_numerator_ret)
+        *accel_numerator_ret = 1;
+    if (accel_denominator_ret)
+        *accel_denominator_ret = 1;
+    if (threshold_ret)
+        *threshold_ret = 0;
+    return 1;
+}
+
+XVisualInfo *bridgeXGetVisualInfo(Display *dpy, long valuemask, XVisualInfo *vistr, int *nitems)
+{
+    (void)valuemask;
+    (void)vistr;
+    XVisualInfo *vi = (XVisualInfo *)calloc(1, sizeof(XVisualInfo));
+    if (vi)
+    {
+        vi->visual = (void *)1;
+        vi->visualid = 1;
+        vi->screen = 0;
+        vi->depth = 24;
+        vi->class_type = 4; // TrueColor
+        vi->red_mask = 0xFF0000;
+        vi->green_mask = 0x00FF00;
+        vi->blue_mask = 0x0000FF;
+        vi->colormap_size = 256;
+        vi->bits_per_rgb = 8;
+    }
+    if (nitems)
+        *nitems = 1;
+    return vi;
+}
+
+int bridgeXMatchVisualInfo(Display *dpy, int depth, int class_type, XVisualInfo *vistr)
+{
+    if (vistr)
+    {
+        vistr->visual = (void *)1;
+        vistr->visualid = 1;
+        vistr->screen = 0;
+        vistr->depth = depth;
+        vistr->class_type = class_type;
+        vistr->red_mask = 0xFF0000;
+        vistr->green_mask = 0x00FF00;
+        vistr->blue_mask = 0x0000FF;
+        vistr->colormap_size = 256;
+        vistr->bits_per_rgb = 8;
+    }
+    return 0; // Success
+}
+
+VisualID bridgeXVisualIDFromVisual(Visual *visual)
+{
+    return 1;
+}
+
+// 2D: the games render with GL; these dummies back the 2D paths they may touch.
+unsigned long bridgeXCreateGC(Display *dpy, Drawable d, unsigned long valuemask, void *values)
+{
+    return 1;
+}
+
+int bridgeXFreeGC(Display *dpy, unsigned long gc)
+{
+    return 1;
+}
+
+Pixmap bridgeXCreatePixmap(Display *dpy, Drawable d, unsigned int width, unsigned int height, unsigned int depth)
+{
+    return 1;
+}
+
+void *bridgeXCreateImage(Display *dpy, Visual *visual, unsigned int depth, int format, char *data, unsigned int width, unsigned int height)
+{
+    return calloc(1, 256);
+}
+
+int bridgeXPutImage(Display *dpy, unsigned long gc, Pixmap src, void *image, int sx, int sy, int dx, int dy, unsigned int width, unsigned int height)
+{
+    return 1;
+}
+
+int bridgeXListPixmapFormats(Display *dpy, int *nformats_return)
+{
+    if (nformats_return)
+        *nformats_return = 0;
+    return 0;
+}
+
+// MIT-SHM: reported absent, so the games take the plain XPutImage path.
+int bridgeXShmQueryExtension(Display *dpy)
+{
+    return 0;
+}
+
+int bridgeXShmAttach(Display *dpy, void *shmseg)
+{
+    return 1;
+}
+
+int bridgeXShmDetach(Display *dpy, void *shmseg)
+{
+    return 1;
+}
+
+void *bridgeXShmCreateImage(Display *dpy, Visual *visual, unsigned int depth, int format, char *data, void *shmseg, unsigned int width, unsigned int height)
+{
+    return calloc(1, 256);
+}
+
+int bridgeXShmPutImage(Display *dpy, unsigned long gc, Pixmap dst, void *image, int sx, int sy, int dx, int dy, unsigned int width, unsigned int height, int send_event)
+{
+    return 1;
+}
+
+// Keyboard: the games poll their own input; the X keymap is empty.
+int bridgeXKeycodeToKeysym(Display *dpy, unsigned char keycode, int index)
+{
+    return 0;
+}
+
+int bridgeXQueryKeymap(Display *dpy, char *key_return)
+{
+    if (key_return)
+        memset(key_return, 0, 32);
+    return 1;
+}
+
+int bridgeXRefreshKeyboardMapping(void *event)
+{
+    return 1;
+}
+
+void *bridgeXGetModifierMapping(Display *dpy)
+{
+    return calloc(1, 32);
+}
+
+void bridgeXFreeModifiermap(void *modmap)
+{
+    free(modmap);
+}
+
+// Colours: dummies. The output must be a full i386 XColor (12 bytes:
+// long pixel; short red, green, blue; char flags; char pad).
+int bridgeXAllocColor(Display *dpy, Colormap cmap, void *color_return)
+{
+    if (color_return)
+        memset(color_return, 0, 12);
+    return 1;
+}
+
+int bridgeXFreeColors(Display *dpy, Colormap cmap, int *list, int ncolors, int deltops)
+{
+    return 1;
+}
+
+int bridgeXQueryColors(Display *dpy, Colormap cmap, void *color, int ncolors)
+{
+    return 1;
+}
+
+int bridgeXStoreColors(Display *dpy, Colormap cmap, void *color, int ncolors)
+{
+    return 1;
+}
+
+// WM hints / properties: no-ops.
+void *bridgeXAllocClassHint(void)
+{
+    return calloc(1, 16);
+}
+
+// The i386 XSizeHints (72 bytes): the game writes its window hints into it.
+void *bridgeXAllocSizeHints(void)
+{
+    return calloc(1, 72);
+}
+
+int bridgeXSetClassHint(Display *dpy, Window w, void *class_hints)
+{
+    return 1;
+}
+
+int bridgeXSetWMHints(Display *dpy, Window w, void *wm_hints)
+{
+    return 1;
+}
+
+// The real Xlib allocates and returns the hints: zero flags, no hints.
+// The i386 XWMHints is 36 bytes (nine longs).
+void *bridgeXGetWMHints(Display *dpy, Window w)
+{
+    return calloc(1, 36);
+}
+
+int bridgeXSetTextProperty(Display *dpy, Window w, void *text_prop, Atom name)
+{
+    return 1;
+}
+
+int bridgeXDeleteProperty(Display *dpy, Window w, Atom property, Atom type, int format)
+{
+    return 1;
+}
+
+int bridgeXutf8TextListToTextProperty(char **list, int count, void *text_prop_return, int mode)
+{
+    return 1;
+}
+
+// Input method lookup: the shim has no IME, report "no conversion".
+int bridgeXutf8LookupString(Display *dpy, XKeyEvent *key_event, char *buffer_return, int nbytes, int *keysym_return, int *status_return)
+{
+    (void)dpy;
+    (void)key_event;
+    if (buffer_return && nbytes > 0)
+        buffer_return[0] = '\0';
+    if (keysym_return)
+        *keysym_return = 0;
+    if (status_return)
+        *status_return = 0; // XLookupStatusNone
+    return 0;
+}
+
+int bridgeXSetIOErrorHandler(int (*IOErrorHandler)(Display *))
+{
+    (void)IOErrorHandler;
+    return 0;
+}
+
+int bridgeXGetErrorDatabaseText(Display *dpy, const char *name, const char *value, char *buffer, unsigned long nbuffer)
+{
+    if (buffer && nbuffer)
+        buffer[0] = '\0';
+    return 0;
+}
+
+// X extension framework internals: the shim has no live extensions.
+void bridgeXextAddDisplay(Display *dpy, void *xext)
+{
+}
+
+int bridgeXextCreateExtension(Display *dpy, void *info, int extension, int event_base, int error_base)
+{
+    return 1;
+}
+
+void bridgeXextDestroyExtension(Display *dpy, void *info)
+{
+}
+
+void bridgeXextRemoveDisplay(Display *dpy, void *xext)
+{
+}
+
+void bridgeXSetExtensionErrorHandler(void *handler)
+{
+}
+
+// XInput (XI) event translation: no-ops.
+void bridgeXESetEventToWire(Display *dpy, void *event, void *xEvent)
+{
+}
+
+void bridgeXESetWireToEvent(Display *dpy, void *event, void *wire)
+{
+}
+
+// X11 wire-protocol internals: the shim talks to no server.
+int bridge_XEatData(Display *dpy, int n, int *read_all)
+{
+    if (read_all)
+        *read_all = 1;
+    return 0;
+}
+
+void bridge_XGetRequest(Display *dpy, int *request, void *request_ptr)
+{
+}
+
+int bridge_XSend(Display *dpy, char *request, int extra, int async)
+{
+    return 1;
+}
+
+int bridge_XRead(Display *dpy, char *buf, int len)
+{
+    return 0;
+}
+
+int bridge_XReadPad(Display *dpy, char *buf, int len, int padlen)
+{
+    return 0;
+}
+
+void bridge_XSetLastRequestRead(Display *dpy)
+{
+}
+
+int bridge_XFlushGCCache(Display *dpy)
+{
+    return 1;
+}
+
+// Input methods: the games never drive a real IM; dummies.
+void *bridgeXOpenIM(Display *dpy, char **args, int nargs)
+{
+    return calloc(1, 64);
+}
+
+int bridgeXCloseIM(void *im)
+{
+    free(im);
+    return 1;
+}
+
+void *bridgeXCreateIC(void *im)
+{
+    return calloc(1, 64);
+}
+
+int bridgeXDestroyIC(void *ic)
+{
+    free(ic);
+    return 1;
+}
+
+int bridgeXGetICValues(void *ic)
+{
+    return 0;
+}
+
+int bridgeXSetICFocus(void *ic, Window w)
+{
+    return 1;
+}
+
+int bridgeXUnsetICFocus(void *ic)
+{
+    return 1;
+}
+
+Display *bridgeXDisplayOfIM(void *im)
+{
+    return (Display *)&s_dummyDisplay;
+}
+
+int bridgeXSetLocaleModifiers(const char *mod)
+{
+    return 1;
+}
+
+int bridgeXFilterEvent(Display *dpy, XEvent *event, int num_vars, void *vars)
+{
+    return 0;
+}
+
+// Xrandr (Pac-Man's mode-switching): reported as a working 1.2, no-ops.
+int bridgeXRRQueryVersion(Display *dpy, int *maj, int *min)
+{
+    if (maj)
+        *maj = 1;
+    if (min)
+        *min = 2;
+    return 1;
+}
+
+void *bridgeXRRGetScreenInfo(Display *dpy, Window w)
+{
+    return calloc(1, 128);
+}
+
+void bridgeXRRFreeScreenConfigInfo(void *info)
+{
+    free(info);
+}
+
+int bridgeXRRSetScreenConfig(void *dpy, void *rcs, Time t, Window root, int x, int y, unsigned int w, unsigned int h, int r, int mask)
+{
+    return 1;
+}
+
+void *bridgeXRRConfigCurrentConfiguration(void *dpy, int *mask_ret)
+{
+    static unsigned long cfg = 1;
+    if (mask_ret)
+        *mask_ret = 0;
+    return &cfg;
+}
+
+int bridgeXRRConfigSizes(void *dpy, int *width_ret, int *height_ret, int *widths_ret)
+{
+    if (width_ret)
+        *width_ret = 1;
+    if (height_ret)
+        *height_ret = 1;
+    if (widths_ret)
+        *widths_ret = 1;
+    return 1;
+}
 #endif
 
 //////////////////////////////////////////////////////////////////////

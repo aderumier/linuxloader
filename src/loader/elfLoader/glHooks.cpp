@@ -1,8 +1,14 @@
 #include <glad/gl.h>
 #include <SDL3/SDL.h>
+#include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32) || defined(__MINGW32__)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #include "glHooks.hpp"
 #include "../graphics/shaderPatches.h"
+#include "../rawthrills/rawthrills.h"
 #include "../patching/patchResolution.h"
 #include "../graphics/crossHair.h"
 
@@ -827,6 +833,32 @@ extern "C" void __attribute__((cdecl)) wrap_glReadPixels(GLint x, GLint y, GLsiz
 
 extern "C" void __attribute__((cdecl)) wrap_glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length)
 {
+    // The Raw Thrills sources, written for NVIDIA's compiler, the way the
+    // Linux interposer does it (shaderPatches.c): concatenated, patched,
+    // and passed on as a single string.
+    if (isRawThrillsGame() && count > 0)
+    {
+        size_t total = 0;
+        for (GLsizei i = 0; i < count; i++)
+            total += length && length[i] >= 0 ? (size_t)length[i] : strlen(string[i]);
+        char *src = (char *)malloc(total + 256);
+        if (src)
+        {
+            char *out = src;
+            for (GLsizei i = 0; i < count; i++)
+            {
+                size_t n = length && length[i] >= 0 ? (size_t)length[i] : strlen(string[i]);
+                memcpy(out, string[i], n);
+                out += n;
+            }
+            *out = '\0';
+            rtPatchShaderSource(src);
+            if (glad_glShaderSource)
+                glad_glShaderSource(shader, 1, (const GLchar *const *)&src, NULL);
+            free(src);
+            return;
+        }
+    }
     if (glad_glShaderSource)
         glad_glShaderSource(shader, count, string, length);
 }
@@ -1991,6 +2023,798 @@ extern "C" void __attribute__((cdecl)) wrap_glBufferSubData(GLenum target, GLint
         glad_glBufferSubData(target, offset, size, data);
 }
 
+#if defined(_WIN32) || defined(__MINGW32__)
+// The system's GLU (glu32.dll) entry points are stdcall, like the GL's,
+// while the games' calls are cdecl. The GLU symbols the games import
+// (see libs/linux_x86/glu_stub.c) get cdecl passthroughs onto the real
+// GLU, as the GL's keep it real too.
+typedef const GLubyte *(*GluErrorString_t)(GLenum);
+typedef void (*GluPerspective_t)(GLdouble, GLdouble, GLdouble, GLdouble);
+typedef void (*GluOrtho2D_t)(GLdouble, GLdouble, GLdouble, GLdouble);
+typedef void (*GluOrtho_t)(GLdouble, GLdouble, GLdouble, GLdouble, GLdouble, GLdouble);
+typedef void (*GluLookAt_t)(GLdouble, GLdouble, GLdouble, GLdouble, GLdouble, GLdouble, GLdouble, GLdouble, GLdouble);
+typedef int (*GluBuild2DMipmaps_t)(GLenum, GLint, GLint, GLint, GLenum, GLenum, const void *);
+typedef int (*GluBuild3DMipmaps_t)(GLenum, GLint, GLint, GLint, GLint, GLenum, GLenum, const void *);
+typedef int (*GluBuild2DMipmapLevels_t)(const void *, GLenum, GLint, GLint, GLint, GLint, GLsizei, GLint);
+typedef int (*GluBuild2DMipmapCube_t)(const void *, GLenum, GLint, GLint, GLint, GLint);
+
+static struct
+{
+    GluErrorString_t errorString;
+    GluPerspective_t perspective;
+    GluOrtho2D_t ortho2D;
+    GluOrtho_t ortho;
+    GluLookAt_t lookAt;
+    GluBuild2DMipmaps_t build2DMipmaps;
+    GluBuild3DMipmaps_t build3DMipmaps;
+    GluBuild2DMipmapLevels_t build2DMipmapLevels;
+    GluBuild2DMipmapCube_t build2DMipmapCube;
+} gluFns;
+
+static void gluFnsLoad(void)
+{
+    static int tried;
+    HMODULE h;
+
+    if (tried)
+        return;
+    tried = 1;
+    if (!(h = LoadLibraryA("glu32.dll")))
+        return;
+    gluFns.errorString = (GluErrorString_t)GetProcAddress(h, "gluErrorString");
+    gluFns.perspective = (GluPerspective_t)GetProcAddress(h, "gluPerspective");
+    gluFns.ortho2D = (GluOrtho2D_t)GetProcAddress(h, "gluOrtho2D");
+    gluFns.ortho = (GluOrtho_t)GetProcAddress(h, "gluOrtho");
+    gluFns.lookAt = (GluLookAt_t)GetProcAddress(h, "gluLookAt");
+    gluFns.build2DMipmaps = (GluBuild2DMipmaps_t)GetProcAddress(h, "gluBuild2DMipmaps");
+    gluFns.build3DMipmaps = (GluBuild3DMipmaps_t)GetProcAddress(h, "gluBuild3DMipmaps");
+    gluFns.build2DMipmapLevels = (GluBuild2DMipmapLevels_t)GetProcAddress(h, "gluBuild2DMipmapLevels");
+    gluFns.build2DMipmapCube = (GluBuild2DMipmapCube_t)GetProcAddress(h, "gluBuild2DMipmapCube");
+}
+
+extern "C" const GLubyte *__attribute__((cdecl)) wrap_gluErrorString(GLenum errCode)
+{
+    gluFnsLoad();
+    return gluFns.errorString ? gluFns.errorString(errCode) : NULL;
+}
+
+extern "C" void __attribute__((cdecl)) wrap_gluPerspective(GLdouble fovy, GLdouble aspect, GLdouble zNear, GLdouble zFar)
+{
+    gluFnsLoad();
+    if (gluFns.perspective)
+        gluFns.perspective(fovy, aspect, zNear, zFar);
+}
+
+extern "C" void __attribute__((cdecl)) wrap_gluOrtho2D(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top)
+{
+    gluFnsLoad();
+    if (gluFns.ortho2D)
+        gluFns.ortho2D(left, right, bottom, top);
+}
+
+extern "C" void __attribute__((cdecl)) wrap_gluOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLdouble zNear, GLdouble zFar)
+{
+    gluFnsLoad();
+    if (gluFns.ortho)
+        gluFns.ortho(left, right, bottom, top, zNear, zFar);
+}
+
+extern "C" void __attribute__((cdecl)) wrap_gluLookAt(GLdouble eyex, GLdouble eyey, GLdouble eyez, GLdouble centerx, GLdouble centery, GLdouble centerz, GLdouble upx, GLdouble upy, GLdouble upz)
+{
+    gluFnsLoad();
+    if (gluFns.lookAt)
+        gluFns.lookAt(eyex, eyey, eyez, centerx, centery, centerz, upx, upy, upz);
+}
+
+extern "C" int __attribute__((cdecl)) wrap_gluBuild2DMipmaps(GLenum target, GLint internalformat, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *data)
+{
+    gluFnsLoad();
+    return gluFns.build2DMipmaps ? gluFns.build2DMipmaps(target, internalformat, width, height, format, type, data) : 0;
+}
+
+extern "C" int __attribute__((cdecl)) wrap_gluBuild3DMipmaps(GLenum target, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *data)
+{
+    gluFnsLoad();
+    return gluFns.build3DMipmaps ? gluFns.build3DMipmaps(target, internalformat, width, height, depth, format, type, data) : 0;
+}
+
+extern "C" int __attribute__((cdecl)) wrap_gluBuild2DMipmapLevels(const void *data, GLenum format, GLint internalformat, GLsizei width, GLsizei height, GLint base, GLsizei levels, GLint border)
+{
+    gluFnsLoad();
+    return gluFns.build2DMipmapLevels ? gluFns.build2DMipmapLevels(data, format, internalformat, width, height, base, levels, border) : 0;
+}
+
+extern "C" int __attribute__((cdecl)) wrap_gluBuild2DMipmapCube(const void *data, GLenum format, GLint internalformat, GLsizei width, GLsizei height, GLint border)
+{
+    gluFnsLoad();
+    return gluFns.build2DMipmapCube ? gluFns.build2DMipmapCube(data, format, internalformat, width, height, border) : 0;
+}
+
+// The GLU symbols the games import, as cdecl passthroughs to the real
+// GLU (gluOrtho2D2: the engine's own copy of gluOrtho2D, see the stub).
+static void *GLHooks_RealGluProc(const char *procName)
+{
+    if (strcmp(procName, "gluErrorString") == 0)
+        return (void *)&wrap_gluErrorString;
+    if (strcmp(procName, "gluPerspective") == 0)
+        return (void *)&wrap_gluPerspective;
+    if (strcmp(procName, "gluOrtho2D") == 0 || strcmp(procName, "gluOrtho2D2") == 0)
+        return (void *)&wrap_gluOrtho2D;
+    if (strcmp(procName, "gluOrtho") == 0)
+        return (void *)&wrap_gluOrtho;
+    if (strcmp(procName, "gluLookAt") == 0)
+        return (void *)&wrap_gluLookAt;
+    if (strcmp(procName, "gluBuild2DMipmaps") == 0)
+        return (void *)&wrap_gluBuild2DMipmaps;
+    if (strcmp(procName, "gluBuild3DMipmaps") == 0)
+        return (void *)&wrap_gluBuild3DMipmaps;
+    if (strcmp(procName, "gluBuild2DMipmapLevels") == 0)
+        return (void *)&wrap_gluBuild2DMipmapLevels;
+    if (strcmp(procName, "gluBuild2DMipmapCube") == 0)
+        return (void *)&wrap_gluBuild2DMipmapCube;
+    return NULL;
+}
+#endif
+
+// Real-GL entry points for the games that must not get the loader's
+// Lindbergh wrappers (Raw Thrills, Roxor): the pure passthroughs to
+// glad, in cdecl, so the games' cdecl calls match (the system's
+// opengl32 entry points are stdcall).
+void *GLHooks_RealGlProc(const char *procName)
+{
+#if defined(_WIN32) || defined(__MINGW32__)
+    if (strncmp(procName, "glu", 3) == 0)
+        return GLHooks_RealGluProc(procName);
+#endif
+    if (strcmp(procName, "glActiveTexture") == 0)
+        return (void *)&wrap_glActiveTexture;
+    if (strcmp(procName, "glActiveTextureARB") == 0)
+        return (void *)&wrap_glActiveTextureARB;
+    if (strcmp(procName, "glAlphaFunc") == 0)
+        return (void *)&wrap_glAlphaFunc;
+    if (strcmp(procName, "glArrayElement") == 0)
+        return (void *)&wrap_glArrayElement;
+    if (strcmp(procName, "glAttachObjectARB") == 0)
+        return (void *)&wrap_glAttachObjectARB;
+    if (strcmp(procName, "glAttachShader") == 0)
+        return (void *)&wrap_glAttachShader;
+    if (strcmp(procName, "glBegin") == 0)
+        return (void *)&wrap_glBegin;
+    if (strcmp(procName, "glBeginOcclusionQueryNV") == 0)
+        return (void *)&wrap_glBeginOcclusionQueryNV;
+    if (strcmp(procName, "glBeginQuery") == 0)
+        return (void *)&wrap_glBeginQuery;
+    if (strcmp(procName, "glBeginQueryARB") == 0)
+        return (void *)&wrap_glBeginQueryARB;
+    if (strcmp(procName, "glBindAttribLocationARB") == 0)
+        return (void *)&wrap_glBindAttribLocationARB;
+    if (strcmp(procName, "glBindBuffer") == 0)
+        return (void *)&wrap_glBindBuffer;
+    if (strcmp(procName, "glBindBufferARB") == 0)
+        return (void *)&wrap_glBindBufferARB;
+    if (strcmp(procName, "glBindFramebuffer") == 0)
+        return (void *)&wrap_glBindFramebuffer;
+    if (strcmp(procName, "glBindFramebufferEXT") == 0)
+        return (void *)&wrap_glBindFramebufferEXT;
+    if (strcmp(procName, "glBindProgramARB") == 0)
+        return (void *)&wrap_glBindProgramARB;
+    if (strcmp(procName, "glBindProgramNV") == 0)
+        return (void *)&wrap_glBindProgramNV;
+    if (strcmp(procName, "glBindRenderbuffer") == 0)
+        return (void *)&wrap_glBindRenderbuffer;
+    if (strcmp(procName, "glBindRenderbufferEXT") == 0)
+        return (void *)&wrap_glBindRenderbufferEXT;
+    if (strcmp(procName, "glBlendColor") == 0)
+        return (void *)&wrap_glBlendColor;
+    if (strcmp(procName, "glBlendColorEXT") == 0)
+        return (void *)&wrap_glBlendColorEXT;
+    if (strcmp(procName, "glBlendEquation") == 0)
+        return (void *)&wrap_glBlendEquation;
+    if (strcmp(procName, "glBlendEquationEXT") == 0)
+        return (void *)&wrap_glBlendEquationEXT;
+    if (strcmp(procName, "glBlendEquationSeparateEXT") == 0)
+        return (void *)&wrap_glBlendEquationSeparateEXT;
+    if (strcmp(procName, "glBlendFunc") == 0)
+        return (void *)&wrap_glBlendFunc;
+    if (strcmp(procName, "glBlendFuncSeparate") == 0)
+        return (void *)&wrap_glBlendFuncSeparate;
+    if (strcmp(procName, "glBlendFuncSeparateEXT") == 0)
+        return (void *)&wrap_glBlendFuncSeparateEXT;
+    if (strcmp(procName, "glBufferData") == 0)
+        return (void *)&wrap_glBufferData;
+    if (strcmp(procName, "glBufferDataARB") == 0)
+        return (void *)&wrap_glBufferDataARB;
+    if (strcmp(procName, "glBufferSubData") == 0)
+        return (void *)&wrap_glBufferSubData;
+    if (strcmp(procName, "glBufferSubDataARB") == 0)
+        return (void *)&wrap_glBufferSubDataARB;
+    if (strcmp(procName, "glCallList") == 0)
+        return (void *)&wrap_glCallList;
+    if (strcmp(procName, "glCheckFramebufferStatus") == 0)
+        return (void *)&wrap_glCheckFramebufferStatus;
+    if (strcmp(procName, "glCheckFramebufferStatusEXT") == 0)
+        return (void *)&wrap_glCheckFramebufferStatusEXT;
+    if (strcmp(procName, "glClampColorARB") == 0)
+        return (void *)&wrap_glClampColorARB;
+    if (strcmp(procName, "glClear") == 0)
+        return (void *)&wrap_glClear;
+    if (strcmp(procName, "glClearColor") == 0)
+        return (void *)&wrap_glClearColor;
+    if (strcmp(procName, "glClearDepth") == 0)
+        return (void *)&wrap_glClearDepth;
+    if (strcmp(procName, "glClearStencil") == 0)
+        return (void *)&wrap_glClearStencil;
+    if (strcmp(procName, "glClientActiveTexture") == 0)
+        return (void *)&wrap_glClientActiveTexture;
+    if (strcmp(procName, "glClientActiveTextureARB") == 0)
+        return (void *)&wrap_glClientActiveTextureARB;
+    if (strcmp(procName, "glClipPlane") == 0)
+        return (void *)&wrap_glClipPlane;
+    if (strcmp(procName, "glColor3d") == 0)
+        return (void *)&wrap_glColor3d;
+    if (strcmp(procName, "glColor3dv") == 0)
+        return (void *)&wrap_glColor3dv;
+    if (strcmp(procName, "glColor3f") == 0)
+        return (void *)&wrap_glColor3f;
+    if (strcmp(procName, "glColor3fv") == 0)
+        return (void *)&wrap_glColor3fv;
+    if (strcmp(procName, "glColor3ub") == 0)
+        return (void *)&wrap_glColor3ub;
+    if (strcmp(procName, "glColor4dv") == 0)
+        return (void *)&wrap_glColor4dv;
+    if (strcmp(procName, "glColor4f") == 0)
+        return (void *)&wrap_glColor4f;
+    if (strcmp(procName, "glColor4fv") == 0)
+        return (void *)&wrap_glColor4fv;
+    if (strcmp(procName, "glColor4ub") == 0)
+        return (void *)&wrap_glColor4ub;
+    if (strcmp(procName, "glColor4ubv") == 0)
+        return (void *)&wrap_glColor4ubv;
+    if (strcmp(procName, "glColorMask") == 0)
+        return (void *)&wrap_glColorMask;
+    if (strcmp(procName, "glColorMaterial") == 0)
+        return (void *)&wrap_glColorMaterial;
+    if (strcmp(procName, "glColorPointer") == 0)
+        return (void *)&wrap_glColorPointer;
+    if (strcmp(procName, "glCompileShader") == 0)
+        return (void *)&wrap_glCompileShader;
+    if (strcmp(procName, "glCompileShaderARB") == 0)
+        return (void *)&wrap_glCompileShaderARB;
+    if (strcmp(procName, "glCompressedTexImage2D") == 0)
+        return (void *)&wrap_glCompressedTexImage2D;
+    if (strcmp(procName, "glCompressedTexImage2DARB") == 0)
+        return (void *)&wrap_glCompressedTexImage2DARB;
+    if (strcmp(procName, "glCompressedTexSubImage2D") == 0)
+        return (void *)&wrap_glCompressedTexSubImage2D;
+    if (strcmp(procName, "glCompressedTexSubImage2DARB") == 0)
+        return (void *)&wrap_glCompressedTexSubImage2DARB;
+    if (strcmp(procName, "glCopyPixels") == 0)
+        return (void *)&wrap_glCopyPixels;
+    if (strcmp(procName, "glCopyTexImage2D") == 0)
+        return (void *)&wrap_glCopyTexImage2D;
+    if (strcmp(procName, "glCopyTexSubImage2D") == 0)
+        return (void *)&wrap_glCopyTexSubImage2D;
+    if (strcmp(procName, "glCreateProgram") == 0)
+        return (void *)&wrap_glCreateProgram;
+    if (strcmp(procName, "glCreateProgramObjectARB") == 0)
+        return (void *)&wrap_glCreateProgramObjectARB;
+    if (strcmp(procName, "glCreateShader") == 0)
+        return (void *)&wrap_glCreateShader;
+    if (strcmp(procName, "glCreateShaderObjectARB") == 0)
+        return (void *)&wrap_glCreateShaderObjectARB;
+    if (strcmp(procName, "glCullFace") == 0)
+        return (void *)&wrap_glCullFace;
+    if (strcmp(procName, "glDeleteBuffers") == 0)
+        return (void *)&wrap_glDeleteBuffers;
+    if (strcmp(procName, "glDeleteBuffersARB") == 0)
+        return (void *)&wrap_glDeleteBuffersARB;
+    if (strcmp(procName, "glDeleteFencesNV") == 0)
+        return (void *)&wrap_glDeleteFencesNV;
+    if (strcmp(procName, "glDeleteFramebuffers") == 0)
+        return (void *)&wrap_glDeleteFramebuffers;
+    if (strcmp(procName, "glDeleteFramebuffersEXT") == 0)
+        return (void *)&wrap_glDeleteFramebuffersEXT;
+    if (strcmp(procName, "glDeleteLists") == 0)
+        return (void *)&wrap_glDeleteLists;
+    if (strcmp(procName, "glDeleteObjectARB") == 0)
+        return (void *)&wrap_glDeleteObjectARB;
+    if (strcmp(procName, "glDeleteProgram") == 0)
+        return (void *)&wrap_glDeleteProgram;
+    if (strcmp(procName, "glDeleteProgramsARB") == 0)
+        return (void *)&wrap_glDeleteProgramsARB;
+    if (strcmp(procName, "glDeleteProgramsNV") == 0)
+        return (void *)&wrap_glDeleteProgramsNV;
+    if (strcmp(procName, "glDeleteQueries") == 0)
+        return (void *)&wrap_glDeleteQueries;
+    if (strcmp(procName, "glDeleteQueriesARB") == 0)
+        return (void *)&wrap_glDeleteQueriesARB;
+    if (strcmp(procName, "glDeleteRenderbuffers") == 0)
+        return (void *)&wrap_glDeleteRenderbuffers;
+    if (strcmp(procName, "glDeleteRenderbuffersEXT") == 0)
+        return (void *)&wrap_glDeleteRenderbuffersEXT;
+    if (strcmp(procName, "glDeleteShader") == 0)
+        return (void *)&wrap_glDeleteShader;
+    if (strcmp(procName, "glDeleteTextures") == 0)
+        return (void *)&wrap_glDeleteTextures;
+    if (strcmp(procName, "glDepthFunc") == 0)
+        return (void *)&wrap_glDepthFunc;
+    if (strcmp(procName, "glDepthMask") == 0)
+        return (void *)&wrap_glDepthMask;
+    if (strcmp(procName, "glDepthRange") == 0)
+        return (void *)&wrap_glDepthRange;
+    if (strcmp(procName, "glDetachObjectARB") == 0)
+        return (void *)&wrap_glDetachObjectARB;
+    if (strcmp(procName, "glDisable") == 0)
+        return (void *)&wrap_glDisable;
+    if (strcmp(procName, "glDisableClientState") == 0)
+        return (void *)&wrap_glDisableClientState;
+    if (strcmp(procName, "glDisableVertexAttribArray") == 0)
+        return (void *)&wrap_glDisableVertexAttribArray;
+    if (strcmp(procName, "glDisableVertexAttribArrayARB") == 0)
+        return (void *)&wrap_glDisableVertexAttribArrayARB;
+    if (strcmp(procName, "glDrawArrays") == 0)
+        return (void *)&wrap_glDrawArrays;
+    if (strcmp(procName, "glDrawArraysEXT") == 0)
+        return (void *)&wrap_glDrawArraysEXT;
+    if (strcmp(procName, "glDrawBuffer") == 0)
+        return (void *)&wrap_glDrawBuffer;
+    if (strcmp(procName, "glDrawBuffers") == 0)
+        return (void *)&wrap_glDrawBuffers;
+    if (strcmp(procName, "glDrawElements") == 0)
+        return (void *)&wrap_glDrawElements;
+    if (strcmp(procName, "glDrawPixels") == 0)
+        return (void *)&wrap_glDrawPixels;
+    if (strcmp(procName, "glDrawRangeElements") == 0)
+        return (void *)&wrap_glDrawRangeElements;
+    if (strcmp(procName, "glEnableClientState") == 0)
+        return (void *)&wrap_glEnableClientState;
+    if (strcmp(procName, "glEnableVertexAttribArray") == 0)
+        return (void *)&wrap_glEnableVertexAttribArray;
+    if (strcmp(procName, "glEnableVertexAttribArrayARB") == 0)
+        return (void *)&wrap_glEnableVertexAttribArrayARB;
+    if (strcmp(procName, "glEnd") == 0)
+        return (void *)&wrap_glEnd;
+    if (strcmp(procName, "glEndList") == 0)
+        return (void *)&wrap_glEndList;
+    if (strcmp(procName, "glEndOcclusionQueryNV") == 0)
+        return (void *)&wrap_glEndOcclusionQueryNV;
+    if (strcmp(procName, "glEndQuery") == 0)
+        return (void *)&wrap_glEndQuery;
+    if (strcmp(procName, "glEndQueryARB") == 0)
+        return (void *)&wrap_glEndQueryARB;
+    if (strcmp(procName, "glFinish") == 0)
+        return (void *)&wrap_glFinish;
+    if (strcmp(procName, "glFinishFenceNV") == 0)
+        return (void *)&wrap_glFinishFenceNV;
+    if (strcmp(procName, "glFlush") == 0)
+        return (void *)&wrap_glFlush;
+    if (strcmp(procName, "glFogf") == 0)
+        return (void *)&wrap_glFogf;
+    if (strcmp(procName, "glFogfv") == 0)
+        return (void *)&wrap_glFogfv;
+    if (strcmp(procName, "glFogi") == 0)
+        return (void *)&wrap_glFogi;
+    if (strcmp(procName, "glFramebufferRenderbuffer") == 0)
+        return (void *)&wrap_glFramebufferRenderbuffer;
+    if (strcmp(procName, "glFramebufferRenderbufferEXT") == 0)
+        return (void *)&wrap_glFramebufferRenderbufferEXT;
+    if (strcmp(procName, "glFramebufferTexture2D") == 0)
+        return (void *)&wrap_glFramebufferTexture2D;
+    if (strcmp(procName, "glFramebufferTexture2DEXT") == 0)
+        return (void *)&wrap_glFramebufferTexture2DEXT;
+    if (strcmp(procName, "glFrontFace") == 0)
+        return (void *)&wrap_glFrontFace;
+    if (strcmp(procName, "glFrustum") == 0)
+        return (void *)&wrap_glFrustum;
+    if (strcmp(procName, "glGenBuffers") == 0)
+        return (void *)&wrap_glGenBuffers;
+    if (strcmp(procName, "glGenBuffersARB") == 0)
+        return (void *)&wrap_glGenBuffersARB;
+    if (strcmp(procName, "glGenerateMipmapEXT") == 0)
+        return (void *)&wrap_glGenerateMipmapEXT;
+    if (strcmp(procName, "glGenFencesNV") == 0)
+        return (void *)&wrap_glGenFencesNV;
+    if (strcmp(procName, "glGenFramebuffers") == 0)
+        return (void *)&wrap_glGenFramebuffers;
+    if (strcmp(procName, "glGenFramebuffersEXT") == 0)
+        return (void *)&wrap_glGenFramebuffersEXT;
+    if (strcmp(procName, "glGenLists") == 0)
+        return (void *)&wrap_glGenLists;
+    if (strcmp(procName, "glGenOcclusionQueriesNV") == 0)
+        return (void *)&wrap_glGenOcclusionQueriesNV;
+    if (strcmp(procName, "glGenProgramsARB") == 0)
+        return (void *)&wrap_glGenProgramsARB;
+    if (strcmp(procName, "glGenProgramsNV") == 0)
+        return (void *)&wrap_glGenProgramsNV;
+    if (strcmp(procName, "glGenQueries") == 0)
+        return (void *)&wrap_glGenQueries;
+    if (strcmp(procName, "glGenQueriesARB") == 0)
+        return (void *)&wrap_glGenQueriesARB;
+    if (strcmp(procName, "glGenRenderbuffers") == 0)
+        return (void *)&wrap_glGenRenderbuffers;
+    if (strcmp(procName, "glGenRenderbuffersEXT") == 0)
+        return (void *)&wrap_glGenRenderbuffersEXT;
+    if (strcmp(procName, "glGenTextures") == 0)
+        return (void *)&wrap_glGenTextures;
+    if (strcmp(procName, "glGetActiveUniform") == 0)
+        return (void *)&wrap_glGetActiveUniform;
+    if (strcmp(procName, "glGetAttribLocation") == 0)
+        return (void *)&wrap_glGetAttribLocation;
+    if (strcmp(procName, "glGetBooleanv") == 0)
+        return (void *)&wrap_glGetBooleanv;
+    if (strcmp(procName, "glGetBufferParameterivARB") == 0)
+        return (void *)&wrap_glGetBufferParameterivARB;
+    if (strcmp(procName, "glGetCompressedTexImage") == 0)
+        return (void *)&wrap_glGetCompressedTexImage;
+    if (strcmp(procName, "glGetDoublev") == 0)
+        return (void *)&wrap_glGetDoublev;
+    if (strcmp(procName, "glGetError") == 0)
+        return (void *)&wrap_glGetError;
+    if (strcmp(procName, "glGetFloatv") == 0)
+        return (void *)&wrap_glGetFloatv;
+    if (strcmp(procName, "glGetInfoLogARB") == 0)
+        return (void *)&wrap_glGetInfoLogARB;
+    if (strcmp(procName, "glGetIntegerv") == 0)
+        return (void *)&wrap_glGetIntegerv;
+    if (strcmp(procName, "glGetLightfv") == 0)
+        return (void *)&wrap_glGetLightfv;
+    if (strcmp(procName, "glGetMaterialfv") == 0)
+        return (void *)&wrap_glGetMaterialfv;
+    if (strcmp(procName, "glGetObjectParameterivARB") == 0)
+        return (void *)&wrap_glGetObjectParameterivARB;
+    if (strcmp(procName, "glGetOcclusionQueryuivNV") == 0)
+        return (void *)&wrap_glGetOcclusionQueryuivNV;
+    if (strcmp(procName, "glGetProgramEnvParameterfvARB") == 0)
+        return (void *)&wrap_glGetProgramEnvParameterfvARB;
+    if (strcmp(procName, "glGetProgramInfoLog") == 0)
+        return (void *)&wrap_glGetProgramInfoLog;
+    if (strcmp(procName, "glGetProgramiv") == 0)
+        return (void *)&wrap_glGetProgramiv;
+    if (strcmp(procName, "glGetProgramivARB") == 0)
+        return (void *)&wrap_glGetProgramivARB;
+    if (strcmp(procName, "glGetQueryObjectiv") == 0)
+        return (void *)&wrap_glGetQueryObjectiv;
+    if (strcmp(procName, "glGetQueryObjectivARB") == 0)
+        return (void *)&wrap_glGetQueryObjectivARB;
+    if (strcmp(procName, "glGetQueryObjectuiv") == 0)
+        return (void *)&wrap_glGetQueryObjectuiv;
+    if (strcmp(procName, "glGetQueryObjectuivARB") == 0)
+        return (void *)&wrap_glGetQueryObjectuivARB;
+    if (strcmp(procName, "glGetShaderInfoLog") == 0)
+        return (void *)&wrap_glGetShaderInfoLog;
+    if (strcmp(procName, "glGetShaderiv") == 0)
+        return (void *)&wrap_glGetShaderiv;
+    if (strcmp(procName, "glGetString") == 0)
+        return (void *)&wrap_glGetString;
+    if (strcmp(procName, "glGetTexEnvfv") == 0)
+        return (void *)&wrap_glGetTexEnvfv;
+    if (strcmp(procName, "glGetTexEnviv") == 0)
+        return (void *)&wrap_glGetTexEnviv;
+    if (strcmp(procName, "glGetTexImage") == 0)
+        return (void *)&wrap_glGetTexImage;
+    if (strcmp(procName, "glGetTexLevelParameteriv") == 0)
+        return (void *)&wrap_glGetTexLevelParameteriv;
+    if (strcmp(procName, "glGetTexParameterfv") == 0)
+        return (void *)&wrap_glGetTexParameterfv;
+    if (strcmp(procName, "glGetTexParameteriv") == 0)
+        return (void *)&wrap_glGetTexParameteriv;
+    if (strcmp(procName, "glGetUniformLocation") == 0)
+        return (void *)&wrap_glGetUniformLocation;
+    if (strcmp(procName, "glGetUniformLocationARB") == 0)
+        return (void *)&wrap_glGetUniformLocationARB;
+    if (strcmp(procName, "glHint") == 0)
+        return (void *)&wrap_glHint;
+    if (strcmp(procName, "glInterleavedArrays") == 0)
+        return (void *)&wrap_glInterleavedArrays;
+    if (strcmp(procName, "glIsBufferARB") == 0)
+        return (void *)&wrap_glIsBufferARB;
+    if (strcmp(procName, "glIsEnabled") == 0)
+        return (void *)&wrap_glIsEnabled;
+    if (strcmp(procName, "glIsFenceNV") == 0)
+        return (void *)&wrap_glIsFenceNV;
+    if (strcmp(procName, "glIsList") == 0)
+        return (void *)&wrap_glIsList;
+    if (strcmp(procName, "glIsProgramARB") == 0)
+        return (void *)&wrap_glIsProgramARB;
+    if (strcmp(procName, "glIsProgramNV") == 0)
+        return (void *)&wrap_glIsProgramNV;
+    if (strcmp(procName, "glIsTexture") == 0)
+        return (void *)&wrap_glIsTexture;
+    if (strcmp(procName, "glLightf") == 0)
+        return (void *)&wrap_glLightf;
+    if (strcmp(procName, "glLightfv") == 0)
+        return (void *)&wrap_glLightfv;
+    if (strcmp(procName, "glLightModelfv") == 0)
+        return (void *)&wrap_glLightModelfv;
+    if (strcmp(procName, "glLightModeli") == 0)
+        return (void *)&wrap_glLightModeli;
+    if (strcmp(procName, "glLightModeliv") == 0)
+        return (void *)&wrap_glLightModeliv;
+    if (strcmp(procName, "glLineStipple") == 0)
+        return (void *)&wrap_glLineStipple;
+    if (strcmp(procName, "glLineWidth") == 0)
+        return (void *)&wrap_glLineWidth;
+    if (strcmp(procName, "glLinkProgram") == 0)
+        return (void *)&wrap_glLinkProgram;
+    if (strcmp(procName, "glLinkProgramARB") == 0)
+        return (void *)&wrap_glLinkProgramARB;
+    if (strcmp(procName, "glLoadIdentity") == 0)
+        return (void *)&wrap_glLoadIdentity;
+    if (strcmp(procName, "glLoadMatrixf") == 0)
+        return (void *)&wrap_glLoadMatrixf;
+    if (strcmp(procName, "glLoadProgramNV") == 0)
+        return (void *)&wrap_glLoadProgramNV;
+    if (strcmp(procName, "glLoadTransposeMatrixf") == 0)
+        return (void *)&wrap_glLoadTransposeMatrixf;
+    if (strcmp(procName, "glLockArraysEXT") == 0)
+        return (void *)&wrap_glLockArraysEXT;
+    if (strcmp(procName, "glLogicOp") == 0)
+        return (void *)&wrap_glLogicOp;
+    if (strcmp(procName, "glMapBuffer") == 0)
+        return (void *)&wrap_glMapBuffer;
+    if (strcmp(procName, "glMapBufferARB") == 0)
+        return (void *)&wrap_glMapBufferARB;
+    if (strcmp(procName, "glMaterialf") == 0)
+        return (void *)&wrap_glMaterialf;
+    if (strcmp(procName, "glMaterialfv") == 0)
+        return (void *)&wrap_glMaterialfv;
+    if (strcmp(procName, "glMatrixMode") == 0)
+        return (void *)&wrap_glMatrixMode;
+    if (strcmp(procName, "glMultiDrawElements") == 0)
+        return (void *)&wrap_glMultiDrawElements;
+    if (strcmp(procName, "glMultiTexCoord2f") == 0)
+        return (void *)&wrap_glMultiTexCoord2f;
+    if (strcmp(procName, "glMultiTexCoord2fARB") == 0)
+        return (void *)&wrap_glMultiTexCoord2fARB;
+    if (strcmp(procName, "glMultiTexCoord2fv") == 0)
+        return (void *)&wrap_glMultiTexCoord2fv;
+    if (strcmp(procName, "glMultiTexCoord2fvARB") == 0)
+        return (void *)&wrap_glMultiTexCoord2fvARB;
+    if (strcmp(procName, "glMultiTexCoord4f") == 0)
+        return (void *)&wrap_glMultiTexCoord4f;
+    if (strcmp(procName, "glMultMatrixd") == 0)
+        return (void *)&wrap_glMultMatrixd;
+    if (strcmp(procName, "glMultMatrixf") == 0)
+        return (void *)&wrap_glMultMatrixf;
+    if (strcmp(procName, "glMultTransposeMatrixf") == 0)
+        return (void *)&wrap_glMultTransposeMatrixf;
+    if (strcmp(procName, "glNewList") == 0)
+        return (void *)&wrap_glNewList;
+    if (strcmp(procName, "glNormal3d") == 0)
+        return (void *)&wrap_glNormal3d;
+    if (strcmp(procName, "glNormal3dv") == 0)
+        return (void *)&wrap_glNormal3dv;
+    if (strcmp(procName, "glNormal3f") == 0)
+        return (void *)&wrap_glNormal3f;
+    if (strcmp(procName, "glNormal3fv") == 0)
+        return (void *)&wrap_glNormal3fv;
+    if (strcmp(procName, "glNormalPointer") == 0)
+        return (void *)&wrap_glNormalPointer;
+    if (strcmp(procName, "glPixelMapusv") == 0)
+        return (void *)&wrap_glPixelMapusv;
+    if (strcmp(procName, "glPixelStoref") == 0)
+        return (void *)&wrap_glPixelStoref;
+    if (strcmp(procName, "glPixelStorei") == 0)
+        return (void *)&wrap_glPixelStorei;
+    if (strcmp(procName, "glPixelTransferf") == 0)
+        return (void *)&wrap_glPixelTransferf;
+    if (strcmp(procName, "glPixelTransferi") == 0)
+        return (void *)&wrap_glPixelTransferi;
+    if (strcmp(procName, "glPointParameterf") == 0)
+        return (void *)&wrap_glPointParameterf;
+    if (strcmp(procName, "glPointParameterfARB") == 0)
+        return (void *)&wrap_glPointParameterfARB;
+    if (strcmp(procName, "glPointParameterfv") == 0)
+        return (void *)&wrap_glPointParameterfv;
+    if (strcmp(procName, "glPointParameteri") == 0)
+        return (void *)&wrap_glPointParameteri;
+    if (strcmp(procName, "glPointSize") == 0)
+        return (void *)&wrap_glPointSize;
+    if (strcmp(procName, "glPolygonMode") == 0)
+        return (void *)&wrap_glPolygonMode;
+    if (strcmp(procName, "glPolygonOffset") == 0)
+        return (void *)&wrap_glPolygonOffset;
+    if (strcmp(procName, "glPopAttrib") == 0)
+        return (void *)&wrap_glPopAttrib;
+    if (strcmp(procName, "glPopClientAttrib") == 0)
+        return (void *)&wrap_glPopClientAttrib;
+    if (strcmp(procName, "glPopMatrix") == 0)
+        return (void *)&wrap_glPopMatrix;
+    if (strcmp(procName, "glPrimitiveRestartIndexNV") == 0)
+        return (void *)&wrap_glPrimitiveRestartIndexNV;
+    if (strcmp(procName, "glProgramEnvParameter4fARB") == 0)
+        return (void *)&wrap_glProgramEnvParameter4fARB;
+    if (strcmp(procName, "glProgramEnvParameter4fvARB") == 0)
+        return (void *)&wrap_glProgramEnvParameter4fvARB;
+    if (strcmp(procName, "glProgramEnvParameters4fvEXT") == 0)
+        return (void *)&wrap_glProgramEnvParameters4fvEXT;
+    if (strcmp(procName, "glProgramLocalParameter4fARB") == 0)
+        return (void *)&wrap_glProgramLocalParameter4fARB;
+    if (strcmp(procName, "glProgramLocalParameter4fvARB") == 0)
+        return (void *)&wrap_glProgramLocalParameter4fvARB;
+    if (strcmp(procName, "glProgramLocalParameters4fvEXT") == 0)
+        return (void *)&wrap_glProgramLocalParameters4fvEXT;
+    if (strcmp(procName, "glProgramParameter4fNV") == 0)
+        return (void *)&wrap_glProgramParameter4fNV;
+    if (strcmp(procName, "glProgramParameter4fvNV") == 0)
+        return (void *)&wrap_glProgramParameter4fvNV;
+    if (strcmp(procName, "glProgramParameters4fvNV") == 0)
+        return (void *)&wrap_glProgramParameters4fvNV;
+    if (strcmp(procName, "glProgramStringARB") == 0)
+        return (void *)&wrap_glProgramStringARB;
+    if (strcmp(procName, "glPushAttrib") == 0)
+        return (void *)&wrap_glPushAttrib;
+    if (strcmp(procName, "glPushClientAttrib") == 0)
+        return (void *)&wrap_glPushClientAttrib;
+    if (strcmp(procName, "glPushMatrix") == 0)
+        return (void *)&wrap_glPushMatrix;
+    if (strcmp(procName, "glRasterPos2f") == 0)
+        return (void *)&wrap_glRasterPos2f;
+    if (strcmp(procName, "glRasterPos2i") == 0)
+        return (void *)&wrap_glRasterPos2i;
+    if (strcmp(procName, "glRasterPos3f") == 0)
+        return (void *)&wrap_glRasterPos3f;
+    if (strcmp(procName, "glReadBuffer") == 0)
+        return (void *)&wrap_glReadBuffer;
+    if (strcmp(procName, "glReadPixels") == 0)
+        return (void *)&wrap_glReadPixels;
+    if (strcmp(procName, "glRectf") == 0)
+        return (void *)&wrap_glRectf;
+    if (strcmp(procName, "glRecti") == 0)
+        return (void *)&wrap_glRecti;
+    if (strcmp(procName, "glRenderbufferStorage") == 0)
+        return (void *)&wrap_glRenderbufferStorage;
+    if (strcmp(procName, "glRenderbufferStorageEXT") == 0)
+        return (void *)&wrap_glRenderbufferStorageEXT;
+    if (strcmp(procName, "glRotatef") == 0)
+        return (void *)&wrap_glRotatef;
+    if (strcmp(procName, "glScalef") == 0)
+        return (void *)&wrap_glScalef;
+    if (strcmp(procName, "glScissor") == 0)
+        return (void *)&wrap_glScissor;
+    if (strcmp(procName, "glSecondaryColor3f") == 0)
+        return (void *)&wrap_glSecondaryColor3f;
+    if (strcmp(procName, "glSecondaryColor3fv") == 0)
+        return (void *)&wrap_glSecondaryColor3fv;
+    if (strcmp(procName, "glSecondaryColor3ub") == 0)
+        return (void *)&wrap_glSecondaryColor3ub;
+    if (strcmp(procName, "glSecondaryColorPointer") == 0)
+        return (void *)&wrap_glSecondaryColorPointer;
+    if (strcmp(procName, "glSetFenceNV") == 0)
+        return (void *)&wrap_glSetFenceNV;
+    if (strcmp(procName, "glShadeModel") == 0)
+        return (void *)&wrap_glShadeModel;
+    if (strcmp(procName, "glShaderSource") == 0)
+        return (void *)&wrap_glShaderSource;
+    if (strcmp(procName, "glShaderSourceARB") == 0)
+        return (void *)&wrap_glShaderSourceARB;
+    if (strcmp(procName, "glStencilFunc") == 0)
+        return (void *)&wrap_glStencilFunc;
+    if (strcmp(procName, "glStencilMask") == 0)
+        return (void *)&wrap_glStencilMask;
+    if (strcmp(procName, "glStencilOp") == 0)
+        return (void *)&wrap_glStencilOp;
+    if (strcmp(procName, "glTexCoord2d") == 0)
+        return (void *)&wrap_glTexCoord2d;
+    if (strcmp(procName, "glTexCoord2f") == 0)
+        return (void *)&wrap_glTexCoord2f;
+    if (strcmp(procName, "glTexCoord2fv") == 0)
+        return (void *)&wrap_glTexCoord2fv;
+    if (strcmp(procName, "glTexCoord3f") == 0)
+        return (void *)&wrap_glTexCoord3f;
+    if (strcmp(procName, "glTexCoord4f") == 0)
+        return (void *)&wrap_glTexCoord4f;
+    if (strcmp(procName, "glTexEnvf") == 0)
+        return (void *)&wrap_glTexEnvf;
+    if (strcmp(procName, "glTexEnvfv") == 0)
+        return (void *)&wrap_glTexEnvfv;
+    if (strcmp(procName, "glTexEnvi") == 0)
+        return (void *)&wrap_glTexEnvi;
+    if (strcmp(procName, "glTexEnviv") == 0)
+        return (void *)&wrap_glTexEnviv;
+    if (strcmp(procName, "glTexGenfv") == 0)
+        return (void *)&wrap_glTexGenfv;
+    if (strcmp(procName, "glTexGeni") == 0)
+        return (void *)&wrap_glTexGeni;
+    if (strcmp(procName, "glTexImage1D") == 0)
+        return (void *)&wrap_glTexImage1D;
+    if (strcmp(procName, "glTexParameterf") == 0)
+        return (void *)&wrap_glTexParameterf;
+    if (strcmp(procName, "glTexParameterfv") == 0)
+        return (void *)&wrap_glTexParameterfv;
+    if (strcmp(procName, "glTexSubImage2D") == 0)
+        return (void *)&wrap_glTexSubImage2D;
+    if (strcmp(procName, "glTrackMatrixNV") == 0)
+        return (void *)&wrap_glTrackMatrixNV;
+    if (strcmp(procName, "glTranslated") == 0)
+        return (void *)&wrap_glTranslated;
+    if (strcmp(procName, "glTranslatef") == 0)
+        return (void *)&wrap_glTranslatef;
+    if (strcmp(procName, "glUniform1f") == 0)
+        return (void *)&wrap_glUniform1f;
+    if (strcmp(procName, "glUniform1fARB") == 0)
+        return (void *)&wrap_glUniform1fARB;
+    if (strcmp(procName, "glUniform1fv") == 0)
+        return (void *)&wrap_glUniform1fv;
+    if (strcmp(procName, "glUniform1fvARB") == 0)
+        return (void *)&wrap_glUniform1fvARB;
+    if (strcmp(procName, "glUniform1i") == 0)
+        return (void *)&wrap_glUniform1i;
+    if (strcmp(procName, "glUniform1iARB") == 0)
+        return (void *)&wrap_glUniform1iARB;
+    if (strcmp(procName, "glUniform1iv") == 0)
+        return (void *)&wrap_glUniform1iv;
+    if (strcmp(procName, "glUniform2fv") == 0)
+        return (void *)&wrap_glUniform2fv;
+    if (strcmp(procName, "glUniform2iv") == 0)
+        return (void *)&wrap_glUniform2iv;
+    if (strcmp(procName, "glUniform3f") == 0)
+        return (void *)&wrap_glUniform3f;
+    if (strcmp(procName, "glUniform3fv") == 0)
+        return (void *)&wrap_glUniform3fv;
+    if (strcmp(procName, "glUniform3fvARB") == 0)
+        return (void *)&wrap_glUniform3fvARB;
+    if (strcmp(procName, "glUniform3iv") == 0)
+        return (void *)&wrap_glUniform3iv;
+    if (strcmp(procName, "glUniform4fv") == 0)
+        return (void *)&wrap_glUniform4fv;
+    if (strcmp(procName, "glUniform4fvARB") == 0)
+        return (void *)&wrap_glUniform4fvARB;
+    if (strcmp(procName, "glUniform4iv") == 0)
+        return (void *)&wrap_glUniform4iv;
+    if (strcmp(procName, "glUniformMatrix2fv") == 0)
+        return (void *)&wrap_glUniformMatrix2fv;
+    if (strcmp(procName, "glUniformMatrix3fv") == 0)
+        return (void *)&wrap_glUniformMatrix3fv;
+    if (strcmp(procName, "glUniformMatrix3fvARB") == 0)
+        return (void *)&wrap_glUniformMatrix3fvARB;
+    if (strcmp(procName, "glUniformMatrix4fv") == 0)
+        return (void *)&wrap_glUniformMatrix4fv;
+    if (strcmp(procName, "glUniformMatrix4fvARB") == 0)
+        return (void *)&wrap_glUniformMatrix4fvARB;
+    if (strcmp(procName, "glUnlockArraysEXT") == 0)
+        return (void *)&wrap_glUnlockArraysEXT;
+    if (strcmp(procName, "glUnmapBuffer") == 0)
+        return (void *)&wrap_glUnmapBuffer;
+    if (strcmp(procName, "glUnmapBufferARB") == 0)
+        return (void *)&wrap_glUnmapBufferARB;
+    if (strcmp(procName, "glUseProgram") == 0)
+        return (void *)&wrap_glUseProgram;
+    if (strcmp(procName, "glUseProgramObjectARB") == 0)
+        return (void *)&wrap_glUseProgramObjectARB;
+    if (strcmp(procName, "glVertex2d") == 0)
+        return (void *)&wrap_glVertex2d;
+    if (strcmp(procName, "glVertex2dv") == 0)
+        return (void *)&wrap_glVertex2dv;
+    if (strcmp(procName, "glVertex2f") == 0)
+        return (void *)&wrap_glVertex2f;
+    if (strcmp(procName, "glVertex2i") == 0)
+        return (void *)&wrap_glVertex2i;
+    if (strcmp(procName, "glVertex3dv") == 0)
+        return (void *)&wrap_glVertex3dv;
+    if (strcmp(procName, "glVertex3f") == 0)
+        return (void *)&wrap_glVertex3f;
+    if (strcmp(procName, "glVertex3fv") == 0)
+        return (void *)&wrap_glVertex3fv;
+    if (strcmp(procName, "glVertex4dv") == 0)
+        return (void *)&wrap_glVertex4dv;
+    if (strcmp(procName, "glVertex4f") == 0)
+        return (void *)&wrap_glVertex4f;
+    if (strcmp(procName, "glVertexAttrib1f") == 0)
+        return (void *)&wrap_glVertexAttrib1f;
+    if (strcmp(procName, "glVertexAttrib3fARB") == 0)
+        return (void *)&wrap_glVertexAttrib3fARB;
+    if (strcmp(procName, "glVertexAttrib4fv") == 0)
+        return (void *)&wrap_glVertexAttrib4fv;
+    if (strcmp(procName, "glVertexAttribPointer") == 0)
+        return (void *)&wrap_glVertexAttribPointer;
+    if (strcmp(procName, "glVertexAttribPointerARB") == 0)
+        return (void *)&wrap_glVertexAttribPointerARB;
+    if (strcmp(procName, "glWindowPos2sARB") == 0)
+        return (void *)&wrap_glWindowPos2sARB;
+    return NULL;
+}
+
 // The interceptor router mapping string names to our safe __cdecl wrappers
 void *GLHooks_GetProcAddress(const char *procName)
 {
@@ -2669,6 +3493,24 @@ void *GLHooks_GetProcAddress(const char *procName)
         return (void *)&wrap_glBufferSubData;
     if (strcmp(procName, "glTexCoord2d") == 0)
         return (void *)&wrap_glTexCoord2d;
+#if defined(_WIN32) || defined(__MINGW32__)
+    // The GLU, as the system's (glu32.dll): the cdecl passthroughs for
+    // the symbols the games import, the raw entry points for the rest.
+    if (strncmp(procName, "glu", 3) == 0)
+    {
+        void *glu = GLHooks_RealGluProc(procName);
+        if (!glu)
+        {
+            static HMODULE hGlu = NULL;
+            if (!hGlu)
+                hGlu = LoadLibraryA("glu32.dll");
+            if (hGlu)
+                glu = (void *)GetProcAddress(hGlu, procName);
+        }
+        if (glu)
+            return glu;
+    }
+#endif
     void *proc = (void *)SDL_GL_GetProcAddress(procName);
     if (proc)
         return proc;

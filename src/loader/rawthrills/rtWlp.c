@@ -3,8 +3,12 @@
 // OpenGL window's surface can replace its GLX drawable (native SDL2/NVIDIA)
 // or change its current context (sdl2-compat).
 
-#include <dlfcn.h>
 #include <stdint.h>
+#include <string.h>
+
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 
 #include "rawthrills.h"
 #include "../common/desktopInput.h"
@@ -22,6 +26,7 @@ static int (*pollEventReal)(void *event);
 static void *softwareSurface, *surfaceWindow;
 static int surfaceWidth, surfaceHeight;
 
+#ifndef _WIN32
 // WLP has keyboard shortcuts that conflict with desktop cabinet controls.
 // Its own SDL keyboard API is blocked; desktopInputState() reads the keys
 // independently and continues to provide the cabinet mappings.
@@ -75,6 +80,7 @@ static void *getWindowSurface(void *window)
     }
     return softwareSurface;
 }
+#endif
 
 void rtWlpInstall(const RtGame *game)
 {
@@ -84,6 +90,11 @@ void rtWlpInstall(const RtGame *game)
     // inserts that player's coin, and L3 is service for player 1.
     desktopGamepadEnableTwoPlayers();
     desktopKeyboardEnableTwoPlayers();
+#ifdef _WIN32
+    // The SDL 2 detours are not ported: its keyboard shortcuts stay.
+    (void)game;
+    log_warn("World's Largest Pac-Man: native keyboard events not blocked on Windows");
+#else
     void *lib = dlopen(game->replacedLib, RTLD_NOW | RTLD_LOCAL);
     if (!lib)
         return;
@@ -110,4 +121,5 @@ void rtWlpInstall(const RtGame *game)
         log_warn("World's Largest Pac-Man: cannot block native keyboard events");
     if (getWindowSurfaceReal && getWindowFlagsReal && getWindowSizeReal && createRGBSurfaceReal && freeSurfaceReal)
         rtDetour("SDL_GetWindowSurface", getWindowSurface);
+#endif
 }

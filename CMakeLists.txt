@@ -192,7 +192,14 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
         src/loader/patching/*.c
         src/loader/redirections/*.c
         src/loader/teamplay/*.c
+        src/loader/roxor/*.c
+        src/loader/rawthrills/*.c
+        src/loader/namco/*.c
         src/loader/common/gamePath.c
+        src/loader/common/alignedCall.c
+        src/loader/common/desktopInput.c
+        src/loader/common/importHook.c
+        src/loader/common/ossDsp.c
         src/loader/graphics/shaderWork/*.c
         src/loader/elfLoader/*.cpp
         src/loader/elfLoader/pthread/*.cpp
@@ -200,6 +207,9 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
         src/icon.rc
     )
 
+
+    # WMMT4 (its in-loader server, POSIX sockets) is not ported yet.
+    list(FILTER SRC_FILES EXCLUDE REGEX "namcoEs1Wmmt4")
 
     # Executable target
     add_executable(linuxloader ${SRC_FILES})
@@ -232,7 +242,7 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
     # Link dependencies
     target_link_directories(${PROJECT_NAME} PRIVATE "libs/win32")
     target_link_libraries(${PROJECT_NAME}
-        minhook xdiff -Wl,-Bstatic SDL3 SDL3_ttf SDL3_image FAudio freetype harfbuzz winpthread stdc++ gcc gcc_eh -Wl,-Bdynamic gdi32 winmm ole32 ws2_32 psapi usp10 rpcrt4 setupapi version imm32 hid delayimp
+        minhook xdiff -Wl,-Bstatic SDL3 SDL3_ttf SDL3_image FAudio freetype harfbuzz winpthread stdc++ gcc gcc_eh -Wl,-Bdynamic gdi32 winmm ole32 ws2_32 psapi usp10 rpcrt4 setupapi version imm32 hid delayimp iphlpapi
     )
 
 else()

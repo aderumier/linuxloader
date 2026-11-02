@@ -30,16 +30,23 @@
 // The desktop keys also work with evdev.
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <dlfcn.h>
+#include <unistd.h>
+#else
+#include <windows.h>
+#endif
 #include <fcntl.h>
 #include <glad/gl.h>
 #include <limits.h>
+#ifndef PATH_MAX
+#define PATH_MAX 260
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 #include <x86intrin.h>
 
 #include <SDL3/SDL_pixels.h>
@@ -49,6 +56,7 @@
 #include "../common/desktopInput.h"
 #include "../config/config.h"
 #include "../graphics/frameScale.h"
+#include "../graphics/glutBridge.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../log/log.h"
 
@@ -82,7 +90,11 @@ static int rtfsOpen(const char *name)
 {
     char path[512];
     dataPath(name, path, sizeof(path));
+#ifdef _WIN32
+    int fd = _open(path, _O_RDONLY);
+#else
     int fd = open(path, O_RDONLY);
+#endif
     if (fd < 0)
         log_warn("Target: Terror: %s not found", path);
     return fd;
@@ -233,9 +245,7 @@ static int gunPosition(JVSIO *io, int gun, int *x, int *y)
 
 static uint64_t nowMs(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return rtNowMs();
 }
 
 // The board's reports for the input as it is now: the switches when they
@@ -373,18 +383,15 @@ static void jammaSendSerial(int fd)
 
 static double nowSeconds(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec / 1e9;
+    return rtNowSeconds();
 }
 
 static int timeInit(void)
 {
-    struct timespec delay = {0, 200000000};
     double start = nowSeconds();
     unsigned long long ticks = __rdtsc();
 
-    nanosleep(&delay, NULL);
+    rtSleepMs(200);
     ticks = __rdtsc() - ticks;
     double hz = ticks / (nowSeconds() - start);
     *(volatile uint64_t *)TT_TIME_TICKS = (uint64_t)hz >> 10;
@@ -409,7 +416,12 @@ static void viewportOf(int x, int y, int width, int height)
     if (!windowViewport)
         *(void **)&windowViewport = frameScaleWrapper("glViewport");
     if (!windowViewport)
+#ifdef _WIN32
+        // The game's glut is the loader's bridge, and its GL the system's.
+        *(void **)&windowViewport = rtRealGlProc("glViewport");
+#else
         *(void **)&windowViewport = dlsym(RTLD_NEXT, "glViewport");
+#endif
     if (windowViewport)
         windowViewport(x, y, width, height);
 }
@@ -448,9 +460,15 @@ static void gameViewport(int x, int y, int width, int height)
 
 static void installReshape(void)
 {
-    void (*reshapeFunc)(void (*)(int, int)) = dlsym(RTLD_NEXT, "glutReshapeFunc");
-
+    void (*reshapeFunc)(void (*)(int, int));
+#ifdef _WIN32
+    // The game's glut is the loader's bridge (see graphics/glutBridge.c).
+    reshapeFunc = bridgeGlutReshapeFunc;
+    glutGetReal = bridgeGlutGet;
+#else
+    reshapeFunc = dlsym(RTLD_NEXT, "glutReshapeFunc");
     *(void **)&glutGetReal = dlsym(RTLD_NEXT, "glutGet");
+#endif
     if (!reshapeFunc || !glutGetReal)
         return;
     reshapeFunc(reshape);
@@ -465,7 +483,11 @@ static void setCursor(int cursor)
     static void (*real)(int);
     if (!real)
     {
+#ifdef _WIN32
+        real = bridgeGlutSetCursor;
+#else
         *(void **)&real = dlsym(RTLD_NEXT, "glutSetCursor");
+#endif
         installReshape();
     }
     if (cursor == GLUT_CURSOR_NONE && getConfig()->inputMode != 2 && !getConfig()->enableCrosshairs)
