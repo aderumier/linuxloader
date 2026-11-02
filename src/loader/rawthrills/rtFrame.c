@@ -297,6 +297,25 @@ static void frameEnd(void)
 }
 
 #ifdef _WIN32
+// The game's SDL_RWFromFile import: its SDL is a Windows DLL, which the
+// loader's file redirections do not reach, so the cabinet paths (sounds
+// under /pm/g5/...) are redirected here.
+static void *rtSdlRWFromFile(const char *file, const char *mode)
+{
+    static void *(*real)(const char *, const char *);
+    char buf[PATH_MAX];
+
+    if (!real)
+    {
+        HMODULE hSdl = (HMODULE)bridgeGetLoadedLibrary("SDL.dll");
+        if (hSdl)
+            *(void **)&real = (void *)GetProcAddress(hSdl, "SDL_RWFromFile");
+        if (!real)
+            return NULL;
+    }
+    return real(file ? rtRedirectPath(file, buf, sizeof(buf)) : file, mode);
+}
+
 // The game's SDL_GL_SwapBuffers import (see rtDump.c): the frame hook
 // around the real swap, from the game's own SDL.
 void rtSdlSwapBuffers(void)
@@ -666,6 +685,8 @@ void *rtFrameOverride(const char *name)
 #ifdef _WIN32
     if (!strcmp(name, "SDL_GL_SwapBuffers"))
         return (void *)rtSdlSwapBuffers;
+    if (!strcmp(name, "SDL_RWFromFile"))
+        return (void *)rtSdlRWFromFile;
 #endif
     if (g && g->glutGameModeWindow && !strcmp(name, "glutEnterGameMode"))
         return (void *)enterGameMode;
