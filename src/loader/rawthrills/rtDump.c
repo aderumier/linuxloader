@@ -246,9 +246,29 @@ static void *rtGlxGetProcAddress(const char *name)
     return isGlName(name) ? rtGlProcAddress(name) : bridgeGlxGetProcAddress(name);
 }
 
+// The FMOD Studio games' (Cruis'n Blast): without FMOD's profiler and live
+// update. Both start a TCP server for FMOD's tools, which the socket bridge
+// does not serve (the banks then fail to load, FMOD_ERR_NOTREADY), and it
+// would raise a firewall prompt for a cabinet-only tool.
+#define RT_FMOD_STUDIO_INIT_LIVEUPDATE 0x1
+#define RT_FMOD_INIT_PROFILE_ENABLE 0x10000
+
+static int (*fmodStudioInitializeReal)(void *, int, unsigned, unsigned, void *);
+
+static int fmodStudioInitialize(void *system, int maxChannels, unsigned studioFlags, unsigned flags, void *extra)
+{
+    return fmodStudioInitializeReal(system, maxChannels, studioFlags & ~RT_FMOD_STUDIO_INIT_LIVEUPDATE,
+                                    flags & ~RT_FMOD_INIT_PROFILE_ENABLE, extra);
+}
+
 static void *resolveImport(const char *name, const char *version)
 {
     (void)version; // glibc versions, meaningless here
+    if (!strcmp(name, "FMOD_Studio_System_Initialize"))
+    {
+        *(void **)&fmodStudioInitializeReal = bridgeResolveSymbol(name);
+        return fmodStudioInitializeReal ? (void *)fmodStudioInitialize : NULL;
+    }
     if (!strcmp(name, "dlsym"))
         return (void *)gameDlsym;
     if (!strcmp(name, "glXGetProcAddressARB") || !strcmp(name, "glXGetProcAddress"))
