@@ -360,7 +360,36 @@ namespace RtBridge
         return clock();
     }
 
-    int bridgeClockGetres(clockid_t clockid, struct timespec *res)
+    // glibc's sysconf, for the names the games ask (Linux _SC_ values).
+    long bridgeSysconf(int name)
+    {
+        SYSTEM_INFO si;
+        MEMORYSTATUSEX ms;
+        GetSystemInfo(&si);
+        ms.dwLength = sizeof(ms);
+        GlobalMemoryStatusEx(&ms);
+        switch (name)
+        {
+        case 2: // _SC_CLK_TCK
+            return 100;
+        case 4: // _SC_OPEN_MAX
+            return 1024;
+        case 30: // _SC_PAGESIZE
+            return 4096;
+        case 83: // _SC_NPROCESSORS_CONF
+        case 84: // _SC_NPROCESSORS_ONLN
+            return (long)si.dwNumberOfProcessors;
+        case 85: // _SC_PHYS_PAGES
+            return (long)(ms.ullTotalPhys / 4096 > 0x7fffffff ? 0x7fffffff : ms.ullTotalPhys / 4096);
+        case 86: // _SC_AVPHYS_PAGES
+            return (long)(ms.ullAvailPhys / 4096 > 0x7fffffff ? 0x7fffffff : ms.ullAvailPhys / 4096);
+        }
+        log_warn("sysconf(%d): not answered", name);
+        errno = EINVAL;
+        return -1;
+    }
+
+    int bridgeClockGetres(clockid_t clockid, struct linux_timespec *res)
     {
         (void)clockid;
         if (res)
@@ -2258,6 +2287,7 @@ namespace RtBridge
         MAP("floorf", bridgeFloorf);
         MAP("clock", bridgeClock);
         MAP("clock_getres", bridgeClockGetres);
+        MAP("sysconf", bridgeSysconf);
         MAP("dladdr", bridgeDladdr);
         MAP("dlvsym", bridgeDlvsym);
         MAP("endmntent", bridgeEndmntent);
