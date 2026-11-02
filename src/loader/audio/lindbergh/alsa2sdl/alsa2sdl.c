@@ -1,5 +1,7 @@
 #include <SDL3/SDL.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include "../../../log/log.h"
 
 #define SND_PCM_STREAM_PLAYBACK 0
@@ -47,6 +49,7 @@ struct _snd_pcm
     int state;
     char name[64];
     snd_pcm_uframes_t buffer_size;
+    int nonblock; // SND_PCM_NONBLOCK: writei answers -EAGAIN when full
 };
 
 typedef struct _snd_pcm snd_pcm_t;
@@ -109,6 +112,7 @@ int shared_snd_pcm_open(snd_pcm_t **pcm, const char *name, int stream, int mode)
     }
 
     handle->state = SND_PCM_STATE_OPEN;
+    handle->nonblock = mode & 1; // SND_PCM_NONBLOCK
 
     if (pcm)
         *pcm = handle;
@@ -366,9 +370,23 @@ int shared_snd_pcm_delay(snd_pcm_t *pcm, snd_pcm_sframes_t *delayp)
     return 0;
 }
 
+// The frames the device buffer has room for (buffer_size, as configured,
+// less what the SDL stream still holds).
+static long pcmRoom(snd_pcm_t *pcm, int frame_size)
+{
+    long queued = SDL_GetAudioStreamQueued(pcm->stream) / frame_size;
+    long room = (long)pcm->buffer_size - queued;
+    return room > 0 ? room : 0;
+}
+
+// As ALSA's: non-blocking, at most the room left, -EAGAIN when there is
+// none; blocking, every frame, waiting for room (ALSA returns short only on
+// an error: FMOD mixes its next period as soon as writei returns, so a short
+// write dropped the rest of each period). The SDL stream would queue
+// without limit (FMOD writes whatever it is let to); a device that drains
+// nothing for half a second loses its queue rather than hanging the game.
 snd_pcm_sframes_t shared_snd_pcm_writei(snd_pcm_t *pcm, const void *buffer, unsigned long size)
 {
-
     if (!pcm || !pcm->stream)
         return -32; // -EPIPE
 
@@ -376,14 +394,32 @@ snd_pcm_sframes_t shared_snd_pcm_writei(snd_pcm_t *pcm, const void *buffer, unsi
     if (frame_size <= 0)
         return -22; // EINVAL
 
-    int total_bytes = size * frame_size;
-
-    if (SDL_PutAudioStreamData(pcm->stream, buffer, total_bytes))
+    const uint8_t *data = (const uint8_t *)buffer;
+    unsigned long written = 0;
+    int waited = 0;
+    while (written < size)
     {
-        return size; // Success
+        long room = pcmRoom(pcm, frame_size);
+        if (room == 0)
+        {
+            if (pcm->nonblock)
+                return written ? (snd_pcm_sframes_t)written : -11; // -EAGAIN
+            if (++waited > 500)
+            {
+                SDL_ClearAudioStream(pcm->stream);
+                waited = 0;
+                continue;
+            }
+            SDL_Delay(1);
+            continue;
+        }
+        waited = 0;
+        unsigned long n = size - written < (unsigned long)room ? size - written : (unsigned long)room;
+        if (!SDL_PutAudioStreamData(pcm->stream, data + written * frame_size, (int)(n * frame_size)))
+            return written ? (snd_pcm_sframes_t)written : -32;
+        written += n;
     }
-
-    return -32; // Error
+    return (snd_pcm_sframes_t)written;
 }
 
 int shared_snd_pcm_avail_update(snd_pcm_t *pcm)
@@ -499,8 +535,8 @@ unsigned long shared_snd_pcm_sw_params_sizeof(void)
 
 int shared_snd_pcm_nonblock(snd_pcm_t *pcm, int nonblock)
 {
-    (void)pcm;
-    (void)nonblock;
+    if (pcm)
+        pcm->nonblock = nonblock != 0;
     return 0;
 }
 
@@ -511,6 +547,110 @@ int shared_snd_pcm_recover(snd_pcm_t *pcm, int err, int silent)
     (void)silent;
     // No xruns here (the SDL stream just queues); nothing to recover.
     return 0;
+}
+
+// ------------------------------------------------------------------
+// FMOD's ALSA output (the Raw Thrills g5 games, libfmod.so.7): the device
+// list and the exact rate setters.
+
+const char *shared_snd_asoundlib_version(void)
+{
+    return "1.1.3";
+}
+
+// One device, "default", for both directions (no IOID).
+static char alsaDefaultHint[] = "default";
+
+// Memory the game frees: its allocator's (the elfLoader's malloc is
+// _aligned_malloc, see MemoryManager::customMalloc).
+static void *guestCalloc(size_t size)
+{
+#ifdef _WIN32
+    void *p = _aligned_malloc(size, 16);
+#else
+    void *p = malloc(size);
+#endif
+    if (p)
+        memset(p, 0, size);
+    return p;
+}
+
+static void guestFree(void *p)
+{
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    free(p);
+#endif
+}
+
+static char *guestStrdup(const char *s)
+{
+    char *p = guestCalloc(strlen(s) + 1);
+    if (p)
+        strcpy(p, s);
+    return p;
+}
+
+int shared_snd_device_name_hint(int card, const char *iface, void ***hints)
+{
+    (void)card;
+    (void)iface;
+    void **list = (void **)guestCalloc(2 * sizeof(void *));
+    if (!hints || !list)
+    {
+        guestFree(list);
+        return -12; // -ENOMEM
+    }
+    list[0] = alsaDefaultHint;
+    *hints = list;
+    return 0;
+}
+
+// Allocated: the caller frees it (its free()).
+char *shared_snd_device_name_get_hint(const void *hint, const char *id)
+{
+    if (hint != alsaDefaultHint || !id)
+        return NULL;
+    if (!strcmp(id, "NAME"))
+        return guestStrdup("default");
+    if (!strcmp(id, "DESC"))
+        return guestStrdup("Default Audio Device");
+    return NULL;
+}
+
+int shared_snd_device_name_free_hint(void **hints)
+{
+    guestFree(hints);
+    return 0;
+}
+
+int shared_snd_pcm_hw_params_set_rate(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val, int dir)
+{
+    (void)pcm;
+    (void)dir;
+    if (params)
+        params->rate = val;
+    return 0;
+}
+
+// Every rate: the SDL stream resamples.
+int shared_snd_pcm_hw_params_test_rate(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val, int dir)
+{
+    (void)pcm;
+    (void)params;
+    (void)val;
+    (void)dir;
+    return 0;
+}
+
+// No capture (snd_pcm_open refuses it).
+snd_pcm_sframes_t shared_snd_pcm_readi(snd_pcm_t *pcm, void *buffer, snd_pcm_uframes_t size)
+{
+    (void)pcm;
+    (void)buffer;
+    (void)size;
+    return -5; // -EIO
 }
 
 // ------------------------------------------------------------------
