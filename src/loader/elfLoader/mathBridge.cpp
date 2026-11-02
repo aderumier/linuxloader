@@ -42,12 +42,16 @@ namespace MathBridge
         MAP("tanhf", bridge_tanhf);
         MAP("pow", bridge_pow);
         MAP("powf", bridge_powf);
+        MAP("__pow_finite", bridge_pow_finite);
+        MAP("__powf_finite", bridge_powf_finite);
         MAP("hypot", bridge_hypot);
         MAP("hypotf", bridge_hypotf);
         MAP("fmod", bridge_fmod);
         MAP("fmodf", bridge_fmodf);
         MAP("modf", bridge_modf);
         MAP("modff", bridge_modff);
+        MAP("ceil", (double (*)(double))::ceil);
+        MAP("floor", (double (*)(double))::floor);
         MAP("sqrt", bridge_sqrt);
         MAP("sqrtf", bridge_sqrtf);
         MAP("div", bridge_div);
@@ -169,6 +173,16 @@ extern "C" double bridge_pow(double x, double y)
     return ::pow(x, y);
 }
 extern "C" float bridge_powf(float x, float y)
+{
+    return ::powf(x, y);
+}
+// glibc's pow internal (Angry Birds, The Walking Dead): pow without the
+// errno side effects the games do not use.
+extern "C" double bridge_pow_finite(double x, double y)
+{
+    return ::pow(x, y);
+}
+extern "C" float bridge_powf_finite(float x, float y)
 {
     return ::powf(x, y);
 }

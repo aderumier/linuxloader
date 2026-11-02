@@ -17,15 +17,17 @@
 #include "config/config.h"
 #include "../minhook/include/MinHook.h"
 #include "log/log.h"
-#if defined(__linux__)
-#include "rawthrills/rawthrills.h"
-#include "namco/namcoEs1.h"
-#include "namco/namcoN2.h"
-#include "globalvr/gvr.h"
 #include "roxor/roxor.h"
 #include "cecropia/cecropia.h"
 #include "igs/igs.h"
 #include "common/desktopInput.h"
+#include "rawthrills/rawthrills.h"
+#if defined(__linux__) || defined(_WIN32)
+#include "namco/namcoEs1.h"
+#include "namco/namcoN2.h"
+#endif
+#if defined(__linux__)
+#include "globalvr/gvr.h"
 #endif
 #include "teamplay/teamplay.h"
 
@@ -64,6 +66,79 @@ void initMain(char *configPath, char *controlsPath)
     gGrp = getConfig()->gameGroup;
     gWidth = getConfig()->width;
     gHeight = getConfig()->height;
+
+#if defined(_WIN32)
+    // Raw Thrills games use none of the Lindbergh hardware: the dongle, the
+    // RIO I/O board and the sound device are emulated (see rawthrills.c).
+    // Their window is their own SDL's or glut's.
+    if (isRawThrillsGame())
+    {
+        printf("\nLinux Loader\nBy the Linux Loader Development Team 2026\n\n");
+        printf("  GAME:        %s\n", getGameName());
+        printf("  GAME ID:     %s\n", getGameId());
+        initJVS();
+        desktopStartQuitWatch();
+        if (rtInit() != 0)
+            exit(1);
+        printf("\n");
+        return;
+    }
+    // Roxor games (Tux Racer) keep their own window too, the game's own
+    // SDL's (a Windows DLL's, see roxor/roxor.c): none of the Lindbergh
+    // hardware; their parallel port I/O board is the loader's (see
+    // roxor/roxorIo.c), fed from the desktop.
+    if (isRoxorGame())
+    {
+        printf("\nLinux Loader\nBy the Linux Loader Development Team 2026\n\n");
+        printf("  GAME:        %s\n", getGameName());
+        printf("  GAME ID:     %s\n", getGameId());
+        initJVS();
+        desktopStartQuitWatch();
+        // The board's functions are detoured (MinHook), as the Lindbergh
+        // path's hooks below are.
+        if (MH_Initialize() != MH_OK || roxorInit() != 0 || MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
+        {
+            log_error("Roxor: cannot install the I/O board");
+            exit(1);
+        }
+        // The boot trace, only with ROXOR_TRACE set.
+        if (getenv("ROXOR_TRACE"))
+            if (FILE *tf = fopen("roxor_trace.log", "a"))
+            {
+                fputc('M', tf); // hooks enabled, the game's main is next
+                fclose(tf);
+            }
+        printf("\n");
+        return;
+    }
+
+    // Namco ES1 and N2 games: none of the Lindbergh hardware, as on Linux.
+    // Their JVS I/O board is the loader's (see namco/namcoEs1.c), fed from
+    // the desktop; their window is theirs (the game's own SDL 1.2's, a
+    // Windows DLL's) or the loader's (the N2's, see namco/namcoN2.c).
+    if (isNamcoEs1Game())
+    {
+        printf("\nLinux Loader\nBy the Linux Loader Development Team 2026\n\n");
+        printf("  GAME:        %s\n", getGameName());
+        printf("  GAME ID:     %s\n", getGameId());
+        initJVS();
+        if (namcoEs1Init() != 0)
+            exit(1);
+        printf("\n");
+        return;
+    }
+    if (isNamcoN2Game())
+    {
+        printf("\nLinux Loader\nBy the Linux Loader Development Team 2026\n\n");
+        printf("  GAME:        %s\n", getGameName());
+        printf("  GAME ID:     %s\n", getGameId());
+        initJVS();
+        if (namcoN2Init() != 0)
+            exit(1);
+        printf("\n");
+        return;
+    }
+#endif
 
 #ifdef __linux__
     // Raw Thrills games use none of the Lindbergh hardware. They also link

@@ -7,6 +7,11 @@
 
 #include "rtGame.h"
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 // Raw Thrills games (g5 engine, e.g. Jurassic Park Arcade) are dumps of HASP
 // Envelope-protected Linux binaries. They do not use any Lindbergh hardware:
 // the dongle, the RIO I/O board and the sound device are emulated here.
@@ -27,6 +32,10 @@ const char *rtRedirectPath(const char *path, char *buf, size_t size);
 const char *rtRedirectCommand(const char *command, char *buf, size_t size);
 
 // Helpers shared by the rawthrills modules.
+// The monotonic clock and a sleep, for the per-game modules (ms).
+uint32_t rtNowMs(void);
+double rtNowSeconds(void);
+void rtSleepMs(uint32_t ms);
 // Game function by name: exported, or listed in the game's descriptor.
 void *rtSymbol(const char *name);
 // Size of an exported game function (its dynamic symbol's), 0 if unknown.
@@ -42,6 +51,16 @@ void rtInstallIo(const RtGame *game);
 void rtInstallInput(const RtGame *game);
 void rtInstallJamma(const RtGame *game);
 void rtInstallFfb(const RtGame *game);
+// The default stack of the emulated threads, for a game that raises its own
+// thread stack (pthread_setattr_default_np; Windows, the CRT's does not reach
+// them).
+void rtSetDefaultThreadStackSize(size_t size);
+// The game's GL entry points: the real ones, with no loader window in
+// between (rtFrame.c).
+void *rtRealGlProc(const char *name);
+// The frame hook around the game's SDL_GL_SwapBuffers, for its import
+// (Windows; rtFrame.c).
+void rtSdlSwapBuffers(void);
 // Evdev input (the loader's JVS state): whether a switch input is held.
 struct JVSIO;
 int rtIoSwitchState(const RtIoInput *in, struct JVSIO *io);
@@ -77,5 +96,9 @@ void rtSdlGlSwapWindow(void (*real)(void *), void *window);
 void rtGlxSwapBuffers(void *display, unsigned long drawable);
 void *rtRealDlsym(void *handle, const char *name);
 void rtInstallVideo(const RtGame *game);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // RAWTHRILLS_H

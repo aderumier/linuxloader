@@ -5,6 +5,7 @@
 #include "symbolResolver.hpp"
 #include "linuxStack.hpp"
 #include "libcBridge.hpp"
+#include "tlsSupport.hpp"
 #include <elfio.hpp>
 #include <cstring>
 #include <cstdlib>
@@ -16,6 +17,18 @@
 #include <psapi.h>
 
 using namespace ELFIO;
+
+ElfLoader *g_ElfMain = nullptr;
+
+// The game's main-thread stack (see SetMainStackSize): 8 MB, as the Linux
+// default; Raw Thrills raises it to the launcher's limit.
+uint32_t ElfLoader::s_MainStackSize = 8u * 1024u * 1024u;
+
+void ElfLoader::SetMainStackSize(uint32_t size)
+{
+    if (size)
+        s_MainStackSize = size;
+}
 
 static std::vector<void *> s_PendingEhFrames;
 
@@ -200,6 +213,11 @@ bool ElfLoader::LoadMapAndExport(const std::string &path)
     if (!MapSegmentsToMemory())
         return false;
 
+    // Before any symbol export or dependency load, so this ELF's TLS
+    // module index is set for its symbols and for the modules it loads
+    // (the main executable is always module 1).
+    RegisterTlsSegment();
+
     if (!ExportSymbols())
         return false;
 
@@ -210,6 +228,37 @@ bool ElfLoader::LoadMapAndExport(const std::string &path)
         return false;
 
     return true;
+}
+
+void ElfLoader::RegisterTlsSegment()
+{
+    for (Elf_Half i = 0; i < m_Elfio->segments.size(); ++i)
+    {
+        segment *pSegment = m_Elfio->segments[i];
+        if (pSegment->get_type() != PT_TLS)
+            continue;
+
+        Elf64_Addr vaddr = pSegment->get_virtual_address();
+        Elf_Xword filesz = pSegment->get_file_size();
+        Elf_Xword memsz = pSegment->get_memory_size();
+        Elf_Word align = static_cast<Elf_Word>(pSegment->get_align());
+
+        // The mapped .tdata bytes (null for a pure .tbss); for the main
+        // executable they are in place (no separate copy is made).
+        const uint8_t *image = (filesz > 0) ? reinterpret_cast<const uint8_t *>(vaddr + m_LoadBias) : nullptr;
+
+        m_TlsModid = Tls::RegisterModule(m_Path.c_str(), !m_IsSharedObject, static_cast<uint32_t>(vaddr),
+                                         static_cast<uint32_t>(filesz), static_cast<uint32_t>(memsz), align, image);
+
+        if (!m_IsSharedObject && memsz > 0)
+            log_warn("TLS: the main ELF has a PT_TLS segment; its local-exec %fs accesses are not emulated (Windows %fs is the TEB)");
+        return;
+    }
+
+    // The main executable is module 1 even without a TLS segment (its
+    // static layout starts at TCB+0x70).
+    if (!m_IsSharedObject)
+        m_TlsModid = Tls::RegisterModule(m_Path.c_str(), true, 0, 0, 0, 0, nullptr);
 }
 
 bool ElfLoader::ParseElf(const std::string &path)
@@ -385,6 +434,17 @@ bool ElfLoader::LoadDependencies()
         SymbolResolver::GetInstance().RegisterLibrary("libXi.so.6", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libGL.so.1", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libGLU.so.1", "INTERNAL");
+
+        // The Roxor games' (Tux Racer's) window, sound and scripts: the
+        // Windows SDL (the compatibility layer over SDL2/SDL3, and the SDL
+        // 1.2 mixer) as DLLs, Tcl and libpng as the game's own Linux
+        // libraries (found in its lib/ directory), the X libraries' symbols
+        // the game itself does not call (its SDL does, from the DLLs).
+        SymbolResolver::GetInstance().RegisterLibrary("libSDL-1.2.so.0", "SDL.dll");
+        SymbolResolver::GetInstance().RegisterLibrary("libSDL_mixer-1.2.so.0", "SDL_mixer.dll");
+        SymbolResolver::GetInstance().RegisterLibrary("libSM.so.6", "INTERNAL");
+        SymbolResolver::GetInstance().RegisterLibrary("libICE.so.6", "INTERNAL");
+        SymbolResolver::GetInstance().RegisterLibrary("libXt.so.6", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libglut.so.3", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libm.so", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libm.so.6", "INTERNAL");
@@ -556,6 +616,42 @@ bool ElfLoader::ProcessRelocations()
                         continue;
                     }
 
+                    // i386 TLS relocations: the values are DTV module
+                    // indices / offsets within a TLS block, not addresses,
+                    // so they must not go through the generic resolution
+                    // below (glibc formulas, sysdeps/i386/dl-machine.h).
+                    if (type == R_386_TLS_DTPMOD32 || type == R_386_TLS_DTPOFF32 || type == R_386_TLS_TPOFF || type == R_386_TLS_TPOFF32)
+                    {
+                        if (type == R_386_TLS_DTPMOD32)
+                        {
+                            // Anonymous (symbol index 0): the module is this
+                            // object; a named symbol's module is where it is
+                            // defined.
+                            uint32_t modid = (symbolIdx == 0) ? m_TlsModid : Tls::FindSymbolModule(symbolName.c_str());
+                            *patchAddr = modid;
+                            log_info("TLS reloc R_386_TLS_DTPMOD32 for %s at %p (module %u)", symbolName.c_str(), patchAddr, modid);
+                        }
+                        else if (type == R_386_TLS_DTPOFF32)
+                        {
+                            // S + A: the symbol's offset within its module's
+                            // TLS block, plus the addend.
+                            uint32_t off = Tls::FindSymbolTlsOffset(symbolName.c_str()) + static_cast<uint32_t>(addend);
+                            *patchAddr = off;
+                            log_info("TLS reloc R_386_TLS_DTPOFF32 for %s at %p (offset 0x%x)", symbolName.c_str(), patchAddr, off);
+                        }
+                        else
+                        {
+                            // %fs-from-TCB offsets: best-effort, since Windows
+                            // %fs is the TEB and never the Linux TCB.
+                            uint32_t modid = Tls::FindSymbolModule(symbolName.c_str());
+                            uint32_t symOff = Tls::FindSymbolTlsOffset(symbolName.c_str());
+                            uint32_t modOff = Tls::GetModuleTlsOffset(modid);
+                            *patchAddr += (type == R_386_TLS_TPOFF) ? (symOff - modOff) : (modOff - symOff);
+                            log_info("TLS reloc R_386_TLS_TPOFF for %s at %p (best-effort, %fs is the TEB)", symbolName.c_str(), patchAddr);
+                        }
+                        continue;
+                    }
+
                     if (!symbolName.empty())
                     {
                         std::string moduleName;
@@ -622,6 +718,8 @@ bool ElfLoader::ProcessRelocations()
                                 case R_386_JMP_SLOT:
                                     *patchAddr = symValue;
                                     log_trace("Applied R_386_GLOB_DAT / R_386_JMP_SLOT for %s at %p", symbolName.c_str(), patchAddr);
+                                    if (type == R_386_JMP_SLOT && !m_IsSharedObject)
+                                        SymbolResolver::GetInstance().RecordMainImport(symbolName, patchAddr);
                                     break;
                                 default:
                                     log_info("Unhandled relocation type %lu for symbol %s", type, symbolName.c_str());
@@ -678,6 +776,13 @@ bool ElfLoader::ExportSymbols()
 
         if (symbols.get_symbol(k, symbolName, value, size, bind, type, shndx, other))
         {
+            // TLS variables (STT_TLS): their st_value is the offset
+            // within this module's TLS block, not an address, so they
+            // must not be registered as native symbols. The module index
+            // and the offset feed the GD/LD pairs (see tlsSupport).
+            if (type == STT_TLS && shndx != 0 && !symbolName.empty())
+                Tls::RegisterSymbol(symbolName.c_str(), m_TlsModid, static_cast<uint32_t>(value));
+
             if (value != 0 && shndx != 0 && (bind == STB_GLOBAL || bind == STB_WEAK || bind == 10) &&
                 (type == STT_FUNC || type == STT_OBJECT || type == 10))
             {
@@ -731,6 +836,107 @@ bool ElfLoader::ExportSymbols()
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// The loaded image's own dynamic symbol table.
+//
+// Dumps taken from running cabinets can have no section headers at all
+// (the envelope stripped them), so the file's .dynsym section is
+// unreadable; the only symbol table that remains is the one ld.so itself
+// binds through: .dynamic's DT_SYMTAB / DT_STRTAB (Linux's dlsym finds the
+// game's exported functions that way). The table's addresses are read from
+// the loaded, relocated image, not from the file.
+// ---------------------------------------------------------------------------
+
+// A runtime address inside one of the loaded PT_LOAD segments' file-backed
+// ranges: keeps a wild .dynamic pointer from being dereferenced.
+bool ElfLoader::ImageAddressValid(uint32_t address) const
+{
+    for (const auto &seg : m_Elfio->segments)
+    {
+        if (seg->get_type() != PT_LOAD || seg->get_file_size() == 0)
+            continue;
+        uint32_t start = (uint32_t)(seg->get_virtual_address() + m_LoadBias);
+        if (address >= start && address < start + (uint32_t)seg->get_file_size())
+            return true;
+    }
+    return false;
+}
+
+void ElfLoader::ReadImageDynsym() const
+{
+    if (m_DynsymRead)
+        return;
+    m_DynsymRead = true;
+    if (!m_Elfio || m_Elfio->get_class() != ELFCLASS32)
+        return;
+
+    const Elf32_Dyn *dyn = (const Elf32_Dyn *)(uintptr_t)GetDynamicSectionAddress();
+    if (!dyn || !ImageAddressValid((uint32_t)(uintptr_t)dyn))
+    {
+        log_warn("symbol lookup: the image has no readable .dynamic table, name lookups will miss");
+        return;
+    }
+
+    const uint32_t *hash = nullptr;
+    for (const Elf32_Dyn *e = dyn; e - dyn < 128 && e->d_tag != DT_NULL; e++)
+    {
+        switch (e->d_tag)
+        {
+        case DT_SYMTAB:
+            m_DynsymTable = e->d_un.d_val;
+            break;
+        case DT_STRTAB:
+            m_DynsymStrings = e->d_un.d_val;
+            break;
+        case DT_STRSZ:
+            m_DynsymStrsz = e->d_un.d_val;
+            break;
+        case DT_HASH:
+            hash = (const uint32_t *)(uintptr_t)e->d_un.d_val;
+            break;
+        }
+    }
+    if (!m_DynsymTable || !m_DynsymStrings || !ImageAddressValid(m_DynsymTable) || !ImageAddressValid(m_DynsymStrings))
+    {
+        log_warn("symbol lookup: the image's .dynamic points at no usable symbol table (symtab=%08x strtab=%08x)",
+                 (unsigned)m_DynsymTable, (unsigned)m_DynsymStrings);
+        return;
+    }
+    // The entry count: .hash's nchain (glibc's sysv layout). Without it the
+    // walker is bounded by the string table's size instead.
+    if (hash && ImageAddressValid((uint32_t)(uintptr_t)hash))
+        m_DynsymCount = hash[1];
+    log_info("symbol lookup: the image's dynamic symbol table has %u entries at %08x",
+             (unsigned)(m_DynsymCount ? m_DynsymCount : 0), (unsigned)m_DynsymTable);
+}
+
+// One entry of the image's dynamic symbol table by name (a versioned name
+// like "foo@GLIBC_2.0" matches the unversioned one, as dlsym does), or
+// nullptr: the raw table, for FindExportedSymbol and GetSymbolSize.
+static const Elf32_Sym *FindImageDynsym(uint32_t symtab, uint32_t strtab, uint32_t strsz, uint32_t count, const char *name)
+{
+    const Elf32_Sym *sym = (const Elf32_Sym *)(uintptr_t)symtab;
+    const char *str = (const char *)(uintptr_t)strtab;
+    size_t nameLen = strlen(name);
+
+    if (!count)
+        count = strsz + 1; // every entry's name takes at least one byte
+    for (uint32_t i = 1; i < count; i++)
+    {
+        const Elf32_Sym *s = &sym[i];
+        if (s->st_name == 0 && s->st_value == 0)
+            break; // null-terminated table
+        if (strsz && s->st_name >= strsz)
+            break; // ran off the string table: the table is truncated
+        const char *n = str + s->st_name;
+        const char *at = strchr(n, '@');
+        size_t len = at ? (size_t)(at - n) : strlen(n);
+        if (len == nameLen && strncmp(n, name, nameLen) == 0)
+            return s;
+    }
+    return nullptr;
+}
+
 void *ElfLoader::FindExportedSymbol(const std::string &name) const
 {
     if (!m_Elfio)
@@ -761,7 +967,175 @@ void *ElfLoader::FindExportedSymbol(const std::string &name) const
             break;
         }
     }
+
+    // No section headers (a cabinet dump), or the table the sections point
+    // to is unreadable: the same symbols, from the loaded image's .dynamic.
+    // Its entries are runtime addresses already (relocated, or a fixed-base
+    // dump): do not add the load bias again.
+    ReadImageDynsym();
+    if (m_DynsymTable)
+    {
+        const Elf32_Sym *s = FindImageDynsym(m_DynsymTable, m_DynsymStrings, m_DynsymStrsz, m_DynsymCount, name.c_str());
+        if (s && s->st_value != 0 && s->st_shndx != 0)
+        {
+            log_debug("FindExportedSymbol: '%s' found in the image's .dynamic at %p", name.c_str(),
+                      (void *)(uintptr_t)s->st_value);
+            return (void *)(uintptr_t)s->st_value;
+        }
+    }
     return nullptr;
+}
+
+uint32_t ElfLoader::GetSymbolSize(const std::string &name) const
+{
+    if (!m_Elfio)
+        return 0;
+
+    for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
+    {
+        if (m_Elfio->sections[i]->get_type() != SHT_DYNSYM)
+            continue;
+        symbol_section_accessor symbols(*m_Elfio, m_Elfio->sections[i]);
+        for (Elf_Xword k = 0; k < symbols.get_symbols_num(); ++k)
+        {
+            std::string symName;
+            Elf64_Addr value;
+            Elf_Xword size;
+            unsigned char bind, type;
+            Elf_Half shndx;
+            unsigned char other;
+
+            if (symbols.get_symbol(k, symName, value, size, bind, type, shndx, other) && symName == name &&
+                shndx != 0)
+                return (uint32_t)size;
+        }
+        break;
+    }
+
+    ReadImageDynsym();
+    if (m_DynsymTable)
+    {
+        const Elf32_Sym *s = FindImageDynsym(m_DynsymTable, m_DynsymStrings, m_DynsymStrsz, m_DynsymCount, name.c_str());
+        if (s && s->st_shndx != 0)
+            return s->st_size;
+    }
+    return 0;
+}
+
+bool ElfLoader::GetCodeSegment(uint32_t address, uint32_t *start, uint32_t *end) const
+{
+    if (!m_Elfio)
+        return false;
+
+    for (const auto &seg : m_Elfio->segments)
+    {
+        if (seg->get_type() != PT_LOAD || !(seg->get_flags() & PF_X))
+            continue;
+        uint32_t segStart = (uint32_t)(seg->get_virtual_address() + m_LoadBias);
+        uint32_t segEnd = segStart + (uint32_t)seg->get_file_size();
+        if (address >= segStart && address < segEnd)
+        {
+            *start = segStart;
+            *end = segEnd;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ElfLoader::ForEachExportedSymbol(
+    int (*callback)(const char *name, uint32_t value, uint32_t size, unsigned char type, unsigned shndx, void *arg), void *arg) const
+{
+    if (!m_Elfio)
+        return false;
+
+    for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
+    {
+        if (m_Elfio->sections[i]->get_type() != SHT_DYNSYM)
+            continue;
+        symbol_section_accessor symbols(*m_Elfio, m_Elfio->sections[i]);
+        for (Elf_Xword k = 0; k < symbols.get_symbols_num(); ++k)
+        {
+            std::string symName;
+            Elf64_Addr value;
+            Elf_Xword size;
+            unsigned char bind, type;
+            Elf_Half shndx;
+            unsigned char other;
+
+            if (!symbols.get_symbol(k, symName, value, size, bind, type, shndx, other))
+                continue;
+            if (!callback(symName.c_str(), (uint32_t)(value + m_LoadBias), (uint32_t)size, type, shndx, arg))
+                return false;
+        }
+        return true;
+    }
+    return true;
+}
+
+bool ElfLoader::GetWritableCodeSegment(uint32_t *start, uint32_t *end) const
+{
+    if (!m_Elfio)
+        return false;
+
+    for (const auto &seg : m_Elfio->segments)
+    {
+        if (seg->get_type() != PT_LOAD || (seg->get_flags() & (PF_W | PF_X)) != (PF_W | PF_X))
+            continue;
+        *start = (uint32_t)(seg->get_virtual_address() + m_LoadBias);
+        *end = *start + (uint32_t)seg->get_memory_size();
+        return true;
+    }
+    return false;
+}
+
+uint32_t ElfLoader::GetDynamicSectionAddress() const
+{
+    if (!m_Elfio)
+        return 0;
+    for (const auto &seg : m_Elfio->segments)
+        if (seg->get_type() == PT_DYNAMIC)
+            return (uint32_t)(seg->get_virtual_address() + m_LoadBias);
+    for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
+        if (m_Elfio->sections[i]->get_type() == SHT_DYNAMIC)
+            return (uint32_t)(m_Elfio->sections[i]->get_address() + m_LoadBias);
+    return 0;
+}
+
+// The loaded game's symbols and code, for the C code that patches it (Raw
+// Thrills).
+extern "C" void *rtMainSymbol(const char *name)
+{
+    return g_ElfMain ? g_ElfMain->FindExportedSymbol(name) : nullptr;
+}
+
+extern "C" uint32_t rtMainSymbolSize(const char *name)
+{
+    return g_ElfMain ? g_ElfMain->GetSymbolSize(name) : 0;
+}
+
+extern "C" int rtMainCodeSegment(uint32_t address, uint32_t *start, uint32_t *end)
+{
+    return g_ElfMain && g_ElfMain->GetCodeSegment(address, start, end) ? 1 : 0;
+}
+
+extern "C" void *rtMainDynamic(void)
+{
+    uint32_t dyn = g_ElfMain ? g_ElfMain->GetDynamicSectionAddress() : 0;
+    return (void *)(uintptr_t)dyn;
+}
+
+// The loaded game's dynamic symbols and writable code, for the C code that
+// patches it (the Namco N2 hooks).
+extern "C" int rtMainForeachSymbol(
+    int (*callback)(const char *name, uint32_t value, uint32_t size, unsigned char type, unsigned shndx, void *arg), void *arg)
+{
+    return g_ElfMain && g_ElfMain->ForEachExportedSymbol(callback, arg) ? 1 : 0;
+}
+
+extern "C" int rtMainWritableCodeSegment(uint32_t *start, uint32_t *end)
+{
+    return g_ElfMain && g_ElfMain->GetWritableCodeSegment(start, end) ? 1 : 0;
 }
 
 bool ElfLoader::RunInit()
@@ -925,7 +1299,7 @@ bool ElfLoader::Execute(int argc, char **argv, char **envp)
     log_info("Auxv: AT_PHDR=0x%08X AT_PHENT=%u AT_PHNUM=%u AT_PAGESZ=%u AT_ENTRY=0x%08X",
              auxvInfo.AtPhdr, auxvInfo.AtPhent, auxvInfo.AtPhnum, auxvInfo.AtPageSz, auxvInfo.AtEntry);
 
-    const uint32_t STACK_SIZE = 8 * 1024 * 1024;
+    const uint32_t STACK_SIZE = s_MainStackSize;
     const uint32_t RESERVE_SIZE = 0x10000;
 
     uint32_t stackBase = 0;
@@ -937,6 +1311,10 @@ bool ElfLoader::Execute(int argc, char **argv, char **envp)
     __writefsdword(0x08, stackLimit);
 
     log_info("Stack Alloc: %p - %p", (void *)stackLimit, (void *)stackBase);
+
+    // This thread's Linux TCB/DTV (the game's GD/LD TLS goes through
+    // __tls_get_addr, which needs it).
+    Tls::EnsureThreadTls();
 
     typedef void (*EntryPointFunc)(void);
     EntryPointFunc entry = reinterpret_cast<EntryPointFunc>(actualEntry);

@@ -237,6 +237,21 @@ size_t MemoryManager::customStrxfrm(char *dest, const char *src, size_t n)
 
 void *MemoryManager::customMalloc(size_t size)
 {
+#ifdef _WIN32
+    // Temporary: the Roxor (Tux Racer) Windows boot trace, unbuffered,
+    // only with ROXOR_TRACE set.
+    static int count;
+    if (count < 32 && getenv("ROXOR_TRACE"))
+    {
+        count++;
+        FILE *f = fopen("roxor_trace.log", "a");
+        if (f)
+        {
+            fputc('m', f);
+            fclose(f);
+        }
+    }
+#endif
     return _aligned_malloc(size, 16);
 }
 

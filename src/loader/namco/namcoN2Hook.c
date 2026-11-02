@@ -3,18 +3,32 @@
 // dynamic symbol table (never a host library's of the same name, which a
 // plain dlsym could return), its first instruction made a jump.
 
+#include <stdint.h>
+#include <string.h>
+
+#if !defined(_WIN32)
 #define _GNU_SOURCE
 #include <elf.h>
 #include <link.h>
-#include <stdint.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#ifndef SHN_UNDEF
+#define SHN_UNDEF 0
+#endif
+#endif
+
+// These read the game's ELF symbol table, which always uses the ELF
+// encoding: a host header (Windows) may define STT_FUNC differently.
+#define N2_STT_FUNC 2
 
 #include "namcoN2.h"
 #include "../log/log.h"
 #include "../../minhook/src/hde/hde32.h"
 
+#ifndef _WIN32
 // The game's dynamic symbols (the main program: the first object).
 static const Elf32_Sym *symtab;
 static const char *strtab;
@@ -93,6 +107,58 @@ static int writable(void *address, size_t n)
     size_t len = ((uintptr_t)address + n - page + 0xfff) & ~(uintptr_t)0xfff;
     return mprotect((void *)page, len, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
 }
+#else
+// The loader's view of the game (the main executable): its dynamic symbols
+// and the ranges of its segments (see elfLoader/elfLoader.cpp).
+void *rtMainSymbol(const char *name);
+int rtMainForeachSymbol(int (*callback)(const char *name, uint32_t value, uint32_t size, unsigned char type, unsigned shndx, void *arg),
+                        void *arg);
+int rtMainWritableCodeSegment(uint32_t *start, uint32_t *end);
+
+static uint32_t writableCodeStart, writableCodeEnd; // the RWX segment
+
+void *namcoN2Symbol(const char *name)
+{
+    return rtMainSymbol(name);
+}
+
+static int writable(void *address, size_t n)
+{
+    uintptr_t page = (uintptr_t)address & ~(uintptr_t)0xfff;
+    size_t len = ((uintptr_t)address + n - page + 0xfff) & ~(uintptr_t)0xfff;
+    DWORD old;
+    return VirtualProtect((void *)page, len, PAGE_EXECUTE_READWRITE, &old) != 0;
+}
+
+struct EntryPointContext
+{
+    const char *prefix;
+    size_t prefixLen;
+    void *(*resolve)(const char *);
+    int patched;
+};
+
+static int epCallback(const char *name, uint32_t value, uint32_t size, unsigned char type, unsigned shndx, void *arg)
+{
+    (void)size;
+    struct EntryPointContext *ctx = arg;
+
+    if (shndx == SHN_UNDEF || type != N2_STT_FUNC || strncmp(name, ctx->prefix, ctx->prefixLen) != 0 ||
+        value < writableCodeStart || value >= writableCodeEnd)
+        return 1;
+    void *to = ctx->resolve(name);
+    uint8_t *slot = (uint8_t *)(uintptr_t)value;
+    if (!to || !writable(slot, 7))
+        return 1;
+    // mov $to,%eax; jmp *%eax (the slots are 32 bytes apart)
+    slot[0] = 0xb8;
+    *(uint32_t *)(slot + 1) = (uint32_t)(uintptr_t)to;
+    slot[5] = 0xff;
+    slot[6] = 0xe0;
+    ctx->patched++;
+    return 1;
+}
+#endif
 
 static void writeJump(uint8_t *from, const void *to)
 {
@@ -130,12 +196,18 @@ int namcoN2HookOriginal(const char *name, void *replacement, void **original)
     }
     if (!trampolines)
     {
+#ifdef _WIN32
+        trampolines = (uint8_t *)VirtualAlloc(NULL, 0x10000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        if (!trampolines)
+            return 0;
+#else
         trampolines = mmap(NULL, 0x10000, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (trampolines == MAP_FAILED)
         {
             trampolines = NULL;
             return 0;
         }
+#endif
     }
     uint8_t *t = trampolines + trampolinesUsed;
     // Whole instructions covering the 5 bytes of the jump; a relative call
@@ -175,6 +247,7 @@ int namcoN2HookOriginal(const char *name, void *replacement, void **original)
 
 int namcoN2PatchEntryPoints(const char *prefix, void *(*resolve)(const char *))
 {
+#ifndef _WIN32
     size_t prefixLen = strlen(prefix);
     int patched = 0;
 
@@ -201,3 +274,14 @@ int namcoN2PatchEntryPoints(const char *prefix, void *(*resolve)(const char *))
     }
     return patched;
 }
+#else
+    struct EntryPointContext ctx = {prefix, strlen(prefix), resolve, 0};
+    if (!rtMainWritableCodeSegment(&writableCodeStart, &writableCodeEnd))
+    {
+        log_error("Namco N2: the game's writable code segment was not found");
+        return 0;
+    }
+    rtMainForeachSymbol(epCallback, &ctx);
+    return ctx.patched;
+}
+#endif

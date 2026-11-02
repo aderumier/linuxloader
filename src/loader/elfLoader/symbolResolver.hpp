@@ -36,6 +36,9 @@ class SymbolResolver
     // Load a library mapped by RegisterLibrary
     void LoadNeededLibrary(const std::string &linuxName);
 
+    // The handle of a loaded DLL by file name (case-insensitive), or nullptr.
+    void *GetLoadedLibrary(const std::string &dllName);
+
     // Resolve a function/symbol from the loaded chain of libraries or internal bridges
     void *ResolveSymbol(const std::string &symbolName, std::string *outModuleName);
 
@@ -50,6 +53,23 @@ class SymbolResolver
     // Register a symbol exported by a dynamically loaded Linux ELF
     void RegisterNativeSymbol(const std::string &symbolName, void *symbolPtr);
 
+    // The main executable's function imports, as relocated (see
+    // common/elfImports.h): recorded by the loader, read by the games that
+    // stand between the game's calls and their targets.
+    void RecordMainImport(const std::string &symbolName, uint32_t *slot);
+    const std::vector<std::pair<std::string, uint32_t *>> &MainImports() const { return m_MainImports; }
+
+    // Point the game's import of symbolName at replacement (see
+    // common/importHook.h on Windows): its own GOT slot when it imports it,
+    // the resolver's map otherwise (its libraries do); returns what the
+    // import resolves to, nullptr if it does not.
+    void *HookImport(const std::string &symbolName, void *replacement);
+
+    // The address a natively loaded Linux shared object exports under name,
+    // or nullptr: the engine of the Counter Strike NEO dump, looked up for
+    // its hooks (namco/namcoN2Csneo.c).
+    void *FindNativeSymbol(const std::string &symbolName);
+
     // Global relocation and initialization passes
     bool ProcessAllRelocations();
     void PatchAllSOs();
@@ -61,12 +81,17 @@ class SymbolResolver
     {
     }
 
+    // What a symbol resolves to without the resolver's hooks: a native
+    // export, a loaded DLL's, or a GL entry point.
+    void *FindOriginal(const std::string &symbolName, std::string *outModuleName);
+
     std::unordered_map<std::string, std::string> m_LibraryMap;
     std::unordered_map<std::string, void *> m_VTables;
     std::unordered_map<std::string, void **> m_OriginalSymbolPtrs;
     std::unordered_map<std::string, void *> m_NativeSymbols;
     std::vector<void *> m_LoadedLibraries;        // Stores handles to loaded DLLs
     std::vector<ElfLoader *> m_NativeLoaders;     // Stores loaders for purely native Linux shared objects
+    std::vector<std::pair<std::string, uint32_t *>> m_MainImports; // The main executable's function imports (name, GOT slot)
     std::vector<std::string> m_LoadedNativeNames; // Tracks already loaded Linux SO file paths
     std::vector<std::pair<uintptr_t, std::string>> m_PendingSOPatches; // Deferred SO patches (base, path)
 
@@ -79,14 +104,22 @@ class SymbolResolver
 };
 #endif
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C"
 {
 #endif
     void *bridgeResolveSymbol(const char *symbolName);
     void bridgeLoadNeededLibrary(const char *filename);
+    void *bridgeGetLoadedLibrary(const char *dllName);
+    void *bridgeHookImport(const char *symbolName, void *replacement);
+    // The address a natively loaded Linux shared object exports under name,
+    // or NULL (the Counter Strike NEO engine's symbols).
+    void *bridgeFindNativeSymbol(const char *symbolName);
     void EnsureLibGccLoaded();
     void *GetLibGccSymbol(const char *name);
+    int loaderImportSlots(const char **names, uint32_t **slots, int max);
 #ifdef __cplusplus
 }
 #endif

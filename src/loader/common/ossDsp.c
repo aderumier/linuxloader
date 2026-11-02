@@ -5,13 +5,44 @@
 // setup, GETOSPACE, mixer volume ioctls and blocking writes. The IGS games
 // open /dev/mixer too: see ossMixerIsPath.
 
+#if !defined(_WIN32) && !defined(__MINGW32__)
 #include <dlfcn.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32) && !defined(__MINGW32__)
 #include <sys/soundcard.h>
+#else
+// The Linux soundcard definitions the games were built against.
+typedef struct
+{
+    int fragstotal;
+    int fragsize;
+    int fragments;
+    int bytes;
+} audio_buf_info;
+#define AFMT_S16_LE 0x0008
+#define AFMT_U8 0x0020
+#define _IOC(dir, t, nr, sz) (((dir) << 30) | ((t) << 8) | ((nr) << 0) | ((sz) << 16))
+#define _IO(t, nr) _IOC(0, (t), (nr), 0)
+#define _IOR(t, nr, sz) _IOC(2, (t), (nr), sizeof(sz))
+#define _IOW(t, nr, sz) _IOC(1, (t), (nr), sizeof(sz))
+#define _IOWR(t, nr, sz) _IOC(3, (t), (nr), sizeof(sz))
+#define SNDCTL_DSP_RESET _IOW('A', 0x00, int)
+#define SNDCTL_DSP_SYNC _IO('A', 0x01)
+#define SNDCTL_DSP_SPEED _IOWR('A', 0x02, int)
+#define SNDCTL_DSP_STEREO _IOWR('A', 0x03, int)
+#define SNDCTL_DSP_SETFMT _IOWR('A', 0x04, int)
+#define SNDCTL_DSP_GETFMTS _IOR('A', 0x05, int)
+#define SNDCTL_DSP_CHANNELS _IOWR('A', 0x06, int)
+#define SNDCTL_DSP_GETBLKSIZE _IO('A', 0x07)
+#define SNDCTL_DSP_SETFRAGMENT _IOWR('A', 0x08, int)
+#define SNDCTL_DSP_GETOSPACE _IOR('A', 0x09, audio_buf_info)
+#define SNDCTL_DSP_GETODELAY _IOR('A', 0x0a, int)
+#endif
 #include <unistd.h>
 
 #include <SDL3/SDL.h>
@@ -48,6 +79,20 @@ static int loadSdl3(void)
     void *h;
     if (sdl3.Delay)
         return 0;
+#if defined(_WIN32) || defined(__MINGW32__)
+    // The Windows loader links SDL3 statically: the names are local.
+    sdl3.WasInit = SDL_WasInit;
+    sdl3.InitSubSystem = SDL_InitSubSystem;
+    sdl3.GetError = SDL_GetError;
+    sdl3.OpenAudioDeviceStream = SDL_OpenAudioDeviceStream;
+    sdl3.ResumeAudioStreamDevice = SDL_ResumeAudioStreamDevice;
+    sdl3.DestroyAudioStream = SDL_DestroyAudioStream;
+    sdl3.GetAudioStreamQueued = SDL_GetAudioStreamQueued;
+    sdl3.PutAudioStreamData = SDL_PutAudioStreamData;
+    sdl3.ClearAudioStream = SDL_ClearAudioStream;
+    sdl3.Delay = SDL_Delay;
+    return 0;
+#else
     if (!(h = dlopen("libSDL3.so.0", RTLD_NOW | RTLD_NOLOAD)) && !(h = dlopen("libSDL3.so.0", RTLD_NOW)))
     {
         log_error("Raw Thrills: libSDL3.so.0 not found: %s", dlerror());
@@ -68,6 +113,7 @@ static int loadSdl3(void)
     if (!sdl3.WasInit || !sdl3.InitSubSystem || !sdl3.OpenAudioDeviceStream || !sdl3.Delay)
         return -1;
     return 0;
+#endif
 }
 
 static int dspFd = -1;
@@ -78,7 +124,12 @@ static int fragmentSize = DSP_FRAGMENT_SIZE;
 
 int ossDspIsPath(const char *path)
 {
-    return (isRawThrillsGame() || isNamcoEs1Game() || isTeamplayGame() || isGvrGame() || isIgsGame()) && path && strcmp(path, "/dev/dsp") == 0;
+    return (isRawThrillsGame() || isNamcoEs1Game() || isTeamplayGame()
+#ifdef __linux__
+            || isGvrGame() || isIgsGame()
+#endif
+            ) &&
+           path && strcmp(path, "/dev/dsp") == 0;
 }
 
 int ossDspIsFd(int fd)
@@ -128,7 +179,11 @@ int ossDspOpen(int flags)
     if (dspFd >= 0)
         return dspFd;
     // A real descriptor the game can keep; all I/O on it is intercepted.
+#if defined(_WIN32) || defined(__MINGW32__)
+    dspFd = _open("nul", O_WRONLY);
+#else
     dspFd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+#endif
     return dspFd;
 }
 

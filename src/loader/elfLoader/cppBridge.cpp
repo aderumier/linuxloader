@@ -9,6 +9,9 @@
 namespace CppBridge
 {
 
+    const char *bridgeBadAllocWhat();
+    const char *bridgeBadExceptionWhat();
+
     void initBridges()
     {
         log_info("Initializing C++ Bridges...");
@@ -16,7 +19,22 @@ namespace CppBridge
         MAP("_ZdlPv", bridgeOperatorDelete);
         MAP("_Znwj", bridgeOperatorNew);
         MAP("_Znaj", bridgeOperatorNewArray);
-        MAP("_ZdaPv", bridgeOperatorDelete); 
+        MAP("_ZdaPv", bridgeOperatorDelete);
+
+        // std::exception::what() for the old ABI, where they are exported
+        // from libstdc++ rather than inlined.
+        MAP("_ZNKSt9bad_alloc4whatEv", bridgeBadAllocWhat);
+        MAP("_ZNKSt13bad_exception4whatEv", bridgeBadExceptionWhat);
+    }
+
+    const char *bridgeBadAllocWhat()
+    {
+        return "std::bad_alloc";
+    }
+
+    const char *bridgeBadExceptionWhat()
+    {
+        return "std::bad_exception";
     }
 
     void *bridgeOperatorNew(size_t size)

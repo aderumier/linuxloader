@@ -6,10 +6,12 @@
 #endif
 #undef __x86_64__
 
-#ifdef __linux__
-#include "rawthrills/rtGame.h"
+#if defined(__linux__) || defined(_WIN32)
 #include "namco/namcoEs1Game.h"
 #include "namco/namcoN2.h"
+#endif
+#ifdef __linux__
+#include "rawthrills/rtGame.h"
 #include "hostLinker.h"
 #include "globalvr/gvrGame.h"
 #endif
@@ -396,6 +398,7 @@ void isCleanElf(char *command)
         return;
 
     elfCrc = elfCrc ^ 0xFFFFFFFF;
+    log_info("ELF file CRC32: %08x", elfCrc);
     if (!lookupCrcTable(elfCrc))
     {
         printf("\033[1;31m");
@@ -1290,6 +1293,11 @@ int parseArgs(int argc, char *argv[], char *command, char *originalDir, char *ga
     namcoN2PrepareCommand(command, MAX_PATH_LENGTH, elfCrc);
     // Teamplay and Global VR dumps may have lost their executable mode (see hostLinker.c).
     hostLinkerPrepareCommand(command, MAX_PATH_LENGTH, elfCrc);
+#else
+    // The game runs in the loader's process (mainW.cpp splits the path at
+    // its first space): the cabinet's command line goes to its argv.
+    namcoEs1PrepareCommand(gameELF, MAX_PATH_LENGTH, elfCrc);
+    namcoN2PrepareCommand(gameELF, MAX_PATH_LENGTH, elfCrc);
 #endif
 
 #ifdef __linux__

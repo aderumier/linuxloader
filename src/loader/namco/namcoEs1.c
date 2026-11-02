@@ -1,30 +1,39 @@
 // Namco ES1 support: game detection, init, the JVS I/O board on its serial
 // port, the HASP dongle and the cabinet's administration. See namcoEs1.h.
 
-#include <cpuid.h>
-#include <dlfcn.h>
-#include <elf.h>
 #include <errno.h>
-#include <link.h>
 #include <fcntl.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <net/if_arp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
 #include <time.h>
 #include <pthread.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <limits.h>
 
 #include <glad/gl.h>
+
+#if !defined(_WIN32)
+#include <cpuid.h>
+#include <dlfcn.h>
+#include <elf.h>
+#include <link.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <direct.h>
+#include <io.h>
+#include <xmmintrin.h>
+#endif
 
 #include "namcoEs1.h"
 #include "namcoN2.h"
@@ -37,11 +46,77 @@
 #include "../common/webcam.h"
 #include "../graphics/frameScale.h"
 
+// The Linux constants the (Linux-built) game passes to ioctl().
+#define JVS_FIONREAD 0x541b
+#define JVS_TIOCMGET 0x5415
+#define JVS_TIOCM_CTS 0x20
+#define JVS_TIOCM_DSR 0x10
+
+#if !defined(_WIN32)
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <GL/glx.h>
+#define namco_ifreq struct ifreq
+#else
+#include "../graphics/x11Bridge.h" // the fake X11's types (Display, Window...)
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#define mkdir(path, mode) _mkdir(path)
+// MinGW's CRT has no glibc's setenv.
+#define setenv(name, value, overwrite) _putenv_s(name, value)
+
+// The Linux struct ifreq the game's ioctl(SIOCGIFHWADDR) writes into.
+typedef struct
+{
+    unsigned short sa_family;
+    char sa_data[14];
+} LinuxSockaddr;
+typedef struct
+{
+    char ifr_name[16];
+    union
+    {
+        LinuxSockaddr ifr_hwaddr;
+        unsigned char pad[30];
+    };
+} LinuxIfreq;
+#define namco_ifreq LinuxIfreq
+
+// Intel compiler's CPU check (see intelCpuIndicator), as <cpuid.h> on Linux.
+static int getcpuid(int leaf, unsigned int *eax, unsigned int *ebx, unsigned int *ecx, unsigned int *edx)
+{
+    int r[4];
+
+    __cpuid(r, leaf);
+    *eax = (unsigned int)r[0];
+    *ebx = (unsigned int)r[1];
+    *ecx = (unsigned int)r[2];
+    *edx = (unsigned int)r[3];
+    return 1;
+}
+#define __get_cpuid getcpuid
+#define bit_SSSE3 0x00000010u
+#define bit_SSE4_1 0x00080000u
+#endif
+
+#ifndef SIOCGIFHWADDR
+#define SIOCGIFHWADDR 0x8927
+#endif
+#ifndef ARPHRD_ETHER
+#define ARPHRD_ETHER 1
+#endif
 
 extern uint32_t gId;
+
+#ifdef _WIN32
+// common/webcam.c is Linux-only: the games get the camera error screen's
+// hooks instead (a webcam cannot be reached through V4L2 here).
+int webcamHasCamera(void)
+{
+    return 0;
+}
+#endif
 
 static const NamcoEs1Game *game;
 
@@ -69,6 +144,15 @@ static int trace;
 static const char *const noteKind[] = {"write", "read", "fionread", "tiocmget"};
 static long noteSeen[64][4];
 static int noteCount[64][4];
+
+static long threadId(void)
+{
+#ifdef _WIN32
+    return (long)GetCurrentThreadId();
+#else
+    return (long)syscall(SYS_gettid);
+#endif
+}
 
 static void note(long tid, int kind)
 {
@@ -125,7 +209,13 @@ int namcoEs1JvsOpen(int (*realOpen)(const char *, int, ...))
 {
     pthread_mutex_lock(&jvsLock);
     if (jvsFd < 0)
+    {
+#ifdef _WIN32
+        jvsFd = realOpen("nul", O_RDWR);
+#else
         jvsFd = realOpen("/dev/null", O_RDWR);
+#endif
+    }
     rxLen = txLen = txPos = 0;
     pthread_mutex_unlock(&jvsLock);
     return jvsFd;
@@ -196,12 +286,11 @@ static float approach(float value, float target, float step)
 static void keyboardAnalogFrom(const NamcoEs1Game *g, JVSIO *io, int keys, int merge)
 {
     static float steer, gas, brake;
-    static struct timespec last;
-    struct timespec now;
+    static uint32_t last;
+    uint32_t now = rtNowMs();
     int p1 = testOn ? 0 : keys;
 
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    float dt = last.tv_sec ? (now.tv_sec - last.tv_sec) + (now.tv_nsec - last.tv_nsec) / 1e9f : 0;
+    float dt = last ? (now - last) / 1000.f : 0;
     last = now;
     if (dt > 0.1f)
         dt = 0.1f;
@@ -497,7 +586,7 @@ static void jvsPacket(const unsigned char *packet, size_t size, int command)
 
 ssize_t namcoEs1JvsWrite(const void *buf, size_t count)
 {
-    note(syscall(SYS_gettid), 0);
+    note(threadId(), 0);
     pthread_mutex_lock(&jvsLock);
     if (rxLen + count > sizeof(rx))
         rxLen = 0;
@@ -533,7 +622,7 @@ ssize_t namcoEs1JvsWrite(const void *buf, size_t count)
 
 ssize_t namcoEs1JvsRead(void *buf, size_t count)
 {
-    note(syscall(SYS_gettid), 1);
+    note(threadId(), 1);
     pthread_mutex_lock(&jvsLock);
     size_t n = txLen - txPos < count ? txLen - txPos : count;
     memcpy(buf, tx + txPos, n);
@@ -553,15 +642,15 @@ int namcoEs1JvsIoctl(unsigned long request, void *arg)
 {
     switch (request)
     {
-    case FIONREAD:
-        note(syscall(SYS_gettid), 2);
+    case JVS_FIONREAD:
+        note(threadId(), 2);
         pthread_mutex_lock(&jvsLock);
         *(int *)arg = txLen - txPos;
         pthread_mutex_unlock(&jvsLock);
         return 0;
-    case TIOCMGET:
-        note(syscall(SYS_gettid), 3);
-        *(int *)arg = TIOCM_CTS | TIOCM_DSR;
+    case JVS_TIOCMGET:
+        note(threadId(), 3);
+        *(int *)arg = JVS_TIOCM_CTS | JVS_TIOCM_DSR;
         return 0;
     default:
         return 0;
@@ -654,7 +743,17 @@ static int haspGetSize(uint32_t handle, uint32_t fileId, uint32_t *size)
     return HASP_STATUS_OK;
 }
 
-// Replace n bytes of code at address, if they are the expected ones.
+// Make the length bytes at page readable/writable/executable.
+static int makeCodeWritable(uintptr_t page, uintptr_t length)
+{
+#ifdef _WIN32
+    DWORD old;
+    return VirtualProtect((void *)page, length, PAGE_EXECUTE_READWRITE, &old) != 0;
+#else
+    return mprotect((void *)page, length, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+#endif
+}
+
 static void patchCode(uint32_t address, const uint8_t *expected, const uint8_t *replacement, size_t n)
 {
     uintptr_t page = address & ~(uintptr_t)0xfff;
@@ -666,7 +765,7 @@ static void patchCode(uint32_t address, const uint8_t *expected, const uint8_t *
         log_error("Namco: unexpected code at %#x, not patched", address);
         return;
     }
-    if (mprotect((void *)page, (address + n - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+    if (!makeCodeWritable(page, (address + n - page + 0xfff) & ~(uintptr_t)0xfff))
     {
         log_error("Namco: cannot make %#x writable", address);
         return;
@@ -682,7 +781,7 @@ static void detour(uint32_t address, void *replacement)
 
     if (!address)
         return;
-    if (mprotect((void *)page, (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+    if (!makeCodeWritable(page, (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff))
     {
         log_error("Namco: cannot make %#x writable", address);
         return;
@@ -873,7 +972,7 @@ static void windowAtOutputSize(const NamcoEs1Game *g)
 
         if (!g->windowSizeLoad[i] || !g->screenReal)
             return;
-        if (mprotect((void *)page, (operand + 4 - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+        if (!makeCodeWritable(page, (operand + 4 - page + 0xfff) & ~(uintptr_t)0xfff))
         {
             log_error("Namco: cannot make %#x writable", operand);
             return;
@@ -975,7 +1074,7 @@ static void *redirectCall(uint32_t address, void *replacement)
 
     if (!address || call[0] != 0xe8)
         return NULL;
-    if (mprotect((void *)page, (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+    if (!makeCodeWritable(page, (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff))
         return NULL;
     void *target = call + 5 + *(int32_t *)(call + 1);
     *(int32_t *)(call + 1) = (int32_t)((uint8_t *)replacement - (call + 5));
@@ -995,7 +1094,7 @@ static void setMovImmediate(uint32_t address, int32_t value)
         log_error("Namco: unexpected code at %#x, not patched", address);
         return;
     }
-    if (mprotect((void *)page, (address + 7 - page + 0xfff) & ~(uintptr_t)0xfff, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+    if (!makeCodeWritable(page, (address + 7 - page + 0xfff) & ~(uintptr_t)0xfff))
         return;
     memcpy(mov + 3, &value, 4);
 }
@@ -1075,6 +1174,17 @@ static const char *redirectRoot(const NamcoEs1Game *g, const char *path, char *b
     return buf;
 }
 
+// The path exists, past the loader's own redirections (Linux: the access
+// syscall, as the loader's access() comes back to namcoEs1RedirectPath).
+static int namcoEs1FileExists(const char *path)
+{
+#ifdef _WIN32
+    return _access(path, 0) == 0;
+#else
+    return syscall(SYS_access, path, F_OK) == 0;
+#endif
+}
+
 const char *namcoEs1RedirectPath(const char *path, char *buf, size_t size)
 {
     const NamcoEs1Game *g = namcoEs1CurrentGame();
@@ -1091,7 +1201,7 @@ const char *namcoEs1RedirectPath(const char *path, char *buf, size_t size)
         size_t length = strlen(path), missing = strlen(f[0]);
         if (length < missing || strcmp(path + length - missing, f[0]) ||
             (length > missing && path[length - missing - 1] != '/') ||
-            syscall(SYS_access, path, F_OK) == 0)
+            namcoEs1FileExists(path))
             continue;
         snprintf(fallback, sizeof(fallback), "%.*s%s", (int)(length - missing), path, f[1]);
         snprintf(buf, size, "%s", fallback);
@@ -1118,6 +1228,12 @@ int namcoEs1DropCommand(const char *command)
 
 int namcoEs1Eth0(unsigned long request, void *arg)
 {
+#ifdef _WIN32
+    // WMMT4 only, not ported to Windows.
+    (void)request;
+    (void)arg;
+    return -1;
+#else
     const NamcoEs1Game *g = namcoEs1CurrentGame();
     struct ifreq *ifr = arg;
     struct sockaddr_in *in = (struct sockaddr_in *)&ifr->ifr_addr;
@@ -1147,6 +1263,7 @@ int namcoEs1Eth0(unsigned long request, void *arg)
     in->sin_family = AF_INET;
     memcpy(&in->sin_addr, value, 4);
     return 0;
+#endif
 }
 
 const char *namcoEs1CommandOutput(const char *command)
@@ -1157,9 +1274,20 @@ const char *namcoEs1CommandOutput(const char *command)
 
 int namcoEs1HwAddr(int fd, void *arg, int (*realIoctl)(int, int, void *))
 {
-    struct ifreq *ifr = arg;
+    namco_ifreq *ifr = arg;
+#ifndef _WIN32
     struct if_nameindex *names;
+#endif
 
+#ifdef _WIN32
+    // No interface to query here: a locally administered address.
+    (void)fd;
+    (void)realIoctl;
+    static const unsigned char fallback[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+    ifr->ifr_hwaddr.sa_family = ARPHRD_ETHER;
+    memcpy(ifr->ifr_hwaddr.sa_data, fallback, sizeof(fallback));
+    return 0;
+#else
     if (realIoctl(fd, SIOCGIFHWADDR, arg) == 0)
         return 0;
     if ((names = if_nameindex()))
@@ -1184,6 +1312,7 @@ int namcoEs1HwAddr(int fd, void *arg, int (*realIoctl)(int, int, void *))
     ifr->ifr_hwaddr.sa_family = ARPHRD_ETHER;
     memcpy(ifr->ifr_hwaddr.sa_data, fallback, sizeof(fallback));
     return 0;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1336,7 +1465,14 @@ static void *setVideoMode(int width, int height, int bpp, uint32_t flags)
 
     if (surface && !glLoaded)
     {
-        GLADloadfunc getProcAddress = (GLADloadfunc)dlsym(RTLD_DEFAULT, "glXGetProcAddressARB");
+        GLADloadfunc getProcAddress;
+#ifdef _WIN32
+        // The real GL's entry points (see graphics/gpuVendor.c).
+        extern GLADapiproc gladGlLoader(const char *);
+        getProcAddress = (GLADloadfunc)gladGlLoader;
+#else
+        getProcAddress = (GLADloadfunc)dlsym(RTLD_DEFAULT, "glXGetProcAddressARB");
+#endif
         glLoaded = 1;
         if (!getProcAddress || !gladLoadGL(getProcAddress))
             log_error("Namco: cannot load the GL entry points");
@@ -1354,6 +1490,7 @@ static void *gameDlsym(void *handle, const char *name)
 {
     const NamcoEs1Game *g = namcoEs1CurrentGame();
     void *p = g && g->soundEmulation ? namcoEs1SoundSymbol(name) : NULL;
+#ifndef _WIN32
     const Elf32_Sym *sym = NULL;
     Dl_info info;
 
@@ -1361,6 +1498,14 @@ static void *gameDlsym(void *handle, const char *name)
                ELF32_ST_TYPE(sym->st_info) != STT_FUNC))
         return p;
     return g && g->alignStack ? namcoEs1AlignedPointer(p) : p;
+#else
+    // The sound driver's entry points are functions, as every dlsym here is.
+    if (!p)
+        p = realDlsym ? realDlsym(handle, name) : NULL;
+    if (!p)
+        return NULL;
+    return g && g->alignStack ? namcoEs1AlignedPointer(p) : p;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1379,12 +1524,18 @@ static Window portraitCreateWindow(Display *dpy, Window parent, int x, int y, un
                                    XSetWindowAttributes *attributes)
 {
     int w = getConfig()->width, h = getConfig()->height;
+#ifdef _WIN32
+    // The fake display's root window is 0 (see graphics/x11Bridge.c).
+    if (parent == 0 && !getConfig()->fullscreen && w > 0 && h > 0)
+#else
     if (parent == DefaultRootWindow(dpy) && !getConfig()->fullscreen && w > 0 && h > 0)
+#endif
     {
         width = w;
         height = h;
     }
     Window window = realCreateWindow(dpy, parent, x, y, width, height, border, depth, cls, visual, mask, attributes);
+#ifndef _WIN32
     // This process's window (_NET_WM_PID), as SDL marks its own: the quit
     // watch (Esc) only acts on a window so marked, and this hook bypasses
     // the loader's XCreateWindow, which marks the others.
@@ -1394,6 +1545,7 @@ static Window portraitCreateWindow(Display *dpy, Window parent, int x, int y, un
         XChangeProperty(dpy, window, XInternAtom(dpy, "_NET_WM_PID", False), XA_CARDINAL, 32, PropModeReplace,
                         (unsigned char *)&pid, 1);
     }
+#endif
     return window;
 }
 
@@ -1403,7 +1555,12 @@ static void portraitFrame(const NamcoEs1Game *g)
                                           "glBindFramebufferEXT", "glReadBuffer", "glDrawBuffer"};
     if (!g->windowRotationMov)
         return;
+#ifdef _WIN32
+    extern GLADapiproc gladGlLoader(const char *);
+    frameScaleInit((void *(*)(const char *))gladGlLoader, getConfig()->keepAspectRatio);
+#else
     frameScaleInit((void *(*)(const char *))dlsym(RTLD_DEFAULT, "glXGetProcAddressARB"), getConfig()->keepAspectRatio);
+#endif
     frameScaleSetFrame(1360, 768, NULL);
     if (!getConfig()->rotateVertical)
         frameScaleSetRotation(-1);
@@ -1419,6 +1576,17 @@ static void portraitFrame(const NamcoEs1Game *g)
 
 void namcoEs1BeforeSwap(void *dpy, unsigned long drawable)
 {
+#ifdef _WIN32
+    // The fake GLX's drawable is the loader's window.
+    int w = getConfig()->width, h = getConfig()->height;
+
+    (void)dpy;
+    (void)drawable;
+    if (!frameScaling || !isNamcoEs1Game())
+        return;
+    if (w && h)
+        frameScalePresent(0, 0, w, h, 0, 0, 0);
+#else
     static void (*queryDrawable)(Display *, GLXDrawable, int, unsigned *);
     unsigned w = 0, h = 0;
 
@@ -1432,6 +1600,7 @@ void namcoEs1BeforeSwap(void *dpy, unsigned long drawable)
     queryDrawable(dpy, drawable, GLX_HEIGHT, &h);
     if (w && h)
         frameScalePresent(0, 0, w, h, 0, 0, 0);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1451,14 +1620,22 @@ int namcoEs1Init(void)
     setAnalogue(ANALOGUE_2, 0);
     setAnalogue(ANALOGUE_3, 0);
     intelCpuIndicator(g);
+#ifdef _WIN32
+    if (g->rootPath && !GetCurrentDirectoryA(sizeof(gameDir), gameDir))
+        gameDir[0] = '\0';
+#else
     if (g->rootPath && !getcwd(gameDir, sizeof(gameDir)))
         gameDir[0] = '\0';
+#endif
     for (const char *const *dir = g->cabinetDirectories; gameDir[0] && dir && *dir; dir++)
     {
         char path[PATH_MAX];
         snprintf(path, sizeof(path), "%s/%s", gameDir, *dir);
         mkdir(path, 0755);
     }
+#ifndef _WIN32
+    // Symlinks need an admin on Windows; the links the cabinet's storage
+    // script made (Gundam's save0..7) are skipped there for now.
     for (const char *const *link = g->cabinetLinks; gameDir[0] && link && link[0] && link[1]; link += 2)
     {
         char path[PATH_MAX];
@@ -1467,6 +1644,7 @@ int namcoEs1Init(void)
         if (lstat(path, &st) != 0 && symlink(link[1], path) != 0)
             log_warn("Namco: cannot link %s to %s", path, link[1]);
     }
+#endif
     if (g->jammaCalibration)
         saveJammaDefaults(g);
 
