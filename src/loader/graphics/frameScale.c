@@ -50,6 +50,14 @@ void frameScaleSetFrame(int width, int height, void (*hole)(int, int, int *, int
     frameHole = hole;
 }
 
+// The wrappers the games call in place of their GL imports: the Linux GL
+// ABI, cdecl (on Windows GLAD_API_PTR is stdcall).
+#if defined(_WIN32) && !defined(_WIN64)
+#define GAME_GL_CALL __attribute__((cdecl))
+#else
+#define GAME_GL_CALL
+#endif
+
 static int gl(void)
 {
     if (!glLoaded)
@@ -82,14 +90,14 @@ static int boundToGame(GLenum binding)
     return (GLuint)framebuffer == gameFramebuffer;
 }
 
-static void GLAD_API_PTR bindFramebuffer(GLenum target, GLuint framebuffer)
+static void GAME_GL_CALL bindFramebuffer(GLenum target, GLuint framebuffer)
 {
     if (!gl())
         return;
     glad_glBindFramebuffer(target, framebuffer == 0 && active ? gameFramebuffer : framebuffer);
 }
 
-static void GLAD_API_PTR bindFramebufferEXT(GLenum target, GLuint framebuffer)
+static void GAME_GL_CALL bindFramebufferEXT(GLenum target, GLuint framebuffer)
 {
     if (!gl())
         return;
@@ -100,14 +108,14 @@ static void GLAD_API_PTR bindFramebufferEXT(GLenum target, GLuint framebuffer)
         glad_glBindFramebuffer(target, framebuffer);
 }
 
-static void GLAD_API_PTR drawBuffer(GLenum buffer)
+static void GAME_GL_CALL drawBuffer(GLenum buffer)
 {
     if (!gl())
         return;
     glad_glDrawBuffer(boundToGame(GL_DRAW_FRAMEBUFFER_BINDING) ? windowBuffer(buffer) : buffer);
 }
 
-static void GLAD_API_PTR drawBuffers(GLsizei n, const GLenum *buffers)
+static void GAME_GL_CALL drawBuffers(GLsizei n, const GLenum *buffers)
 {
     GLenum mapped[16];
     if (!gl())
@@ -121,7 +129,7 @@ static void GLAD_API_PTR drawBuffers(GLsizei n, const GLenum *buffers)
     glad_glDrawBuffers(n, buffers);
 }
 
-static void GLAD_API_PTR readBuffer(GLenum buffer)
+static void GAME_GL_CALL readBuffer(GLenum buffer)
 {
     if (!gl())
         return;
@@ -130,7 +138,7 @@ static void GLAD_API_PTR readBuffer(GLenum buffer)
 
 // Games that follow their window (glut's reshape callback, Big Buck World)
 // set a viewport of the window's new size: they scale themselves.
-static void GLAD_API_PTR viewport(GLint x, GLint y, GLsizei width, GLsizei height)
+static void GAME_GL_CALL viewport(GLint x, GLint y, GLsizei width, GLsizei height)
 {
     if (!gl())
         return;
@@ -153,7 +161,7 @@ static void GLAD_API_PTR viewport(GLint x, GLint y, GLsizei width, GLsizei heigh
 }
 
 // The game still sees framebuffer 0 and the window's back buffer.
-static void GLAD_API_PTR getIntegerv(GLenum name, GLint *data)
+static void GAME_GL_CALL getIntegerv(GLenum name, GLint *data)
 {
     if (!gl())
         return;
