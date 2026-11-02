@@ -12,11 +12,13 @@
 // coins, counted, each held long enough for the debounce.
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "roxor.h"
 #include "../common/desktopInput.h"
 #include "../config/config.h"
 #include "../hardware/lindbergh/jvs.h"
+#include "../log/log.h"
 #include "../patching/flowControl.h"
 
 // A coin's switch held, then released, for this many board updates (10 ms).
@@ -86,21 +88,46 @@ static unsigned int switches(void)
     return word;
 }
 
+// The boot trace, only with ROXOR_TRACE set (the game polls the board's
+// input from a hot loop).
+static void trace(char c)
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+        enabled = getenv("ROXOR_TRACE") != 0;
+    if (!enabled)
+        return;
+    FILE *f = fopen("roxor_trace.log", "a");
+    if (f)
+    {
+        fputc(c, f);
+        fclose(f);
+    }
+}
+
 __attribute__((force_align_arg_pointer)) static int openIoBoard(void)
 {
+    trace('A');
     *(volatile char *)(uintptr_t)game->ioBoardAttached = 1;
+    trace('B');
     *(volatile unsigned int *)(uintptr_t)game->ioBoardSwitchMask = 0xffffffff;
+    trace('C');
+    log_info("Roxor: I/O board opened");
+    trace('D');
     return 1;
 }
 
 __attribute__((force_align_arg_pointer)) static int closeIoBoard(void)
 {
+    trace('E');
     *(volatile char *)(uintptr_t)game->ioBoardAttached = 0;
     return 1;
 }
 
 __attribute__((force_align_arg_pointer)) static int checkIoBoardError(void)
 {
+    trace('F');
     return 1;
 }
 
@@ -108,6 +135,7 @@ __attribute__((force_align_arg_pointer)) static int ioOut(unsigned int address, 
 {
     (void)address;
     (void)value;
+    trace('U');
     return 1;
 }
 
@@ -116,6 +144,7 @@ __attribute__((force_align_arg_pointer)) static int ioIn(unsigned int address, u
 {
     static unsigned int word;
 
+    trace('I');
     if ((address & 0xffff) == 1)
         word = switches();
     *value = (unsigned char)(~word >> ((address & 0xffff) == 0 ? 8 : 0));

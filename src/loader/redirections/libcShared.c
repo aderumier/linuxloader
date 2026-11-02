@@ -13,6 +13,10 @@
 #include "../teamplay/teamplay.h"
 #include "../globalvr/gvr.h"
 #endif
+#ifdef _WIN32
+#include "../namco/namcoEs1.h"
+#include "../namco/namcoN2.h"
+#endif
 #include "../config/config.h"
 #include "loader/elfLoader/symbolResolver.hpp"
 
@@ -289,6 +293,15 @@ int system(const char *command)
     char rtCommand[PATH_MAX * 2];
     command = rtRedirectCommand(command, rtCommand, sizeof(rtCommand));
     if (namcoEs1DropCommand(command) || teamplayDropCommand(command))
+        return 0;
+    int n2Status;
+    if (namcoN2Command(command, &n2Status))
+        return n2Status;
+#endif
+#ifdef _WIN32
+    // Namco: the cabinet's shell commands (the network config, the work
+    // disk's layout, the CS NEO's freespace): answered, not run.
+    if (namcoEs1DropCommand(command))
         return 0;
     int n2Status;
     if (namcoN2Command(command, &n2Status))

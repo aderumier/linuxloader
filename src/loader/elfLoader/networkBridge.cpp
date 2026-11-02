@@ -223,6 +223,8 @@ namespace NetworkBridge
         MAP("shutdown", shutdown);
         MAP("setsockopt", bridgeSetsockopt);
         MAP("getsockopt", bridgeGetsockopt);
+        MAP("getpeername", bridgeGetpeername);
+        MAP("getsockname", bridgeGetsockname);
         MAP("inet_pton", bridgeInet_pton);
         MAP("inet_aton", bridgeInet_aton);
         MAP("inet_addr", bridgeInet_addr);
@@ -442,6 +444,26 @@ extern "C" int bridgeGetsockopt(SOCKET s, int level, int optname, char *optval, 
     }
     log_info(">>> getsockopt EXIT: returning %d", ret);
     return ret;
+}
+
+// The cabinet has no network (the games' are single player's): the
+// failure, as glibc's would on a non socket's.
+extern "C" int bridgeGetpeername(SOCKET s, struct sockaddr *addr, int *addrlen)
+{
+    (void)s;
+    (void)addr;
+    (void)addrlen;
+    errno = 98; // ENOTSOCK
+    return -1;
+}
+
+extern "C" int bridgeGetsockname(SOCKET s, struct sockaddr *addr, int *addrlen)
+{
+    (void)s;
+    (void)addr;
+    (void)addrlen;
+    errno = 98; // ENOTSOCK
+    return -1;
 }
 
 int NetworkBridge::bridgeGethostbyname_r(const char *name, void *ret, char *buf, size_t buflen, void **result, int *h_errnop)

@@ -23,6 +23,8 @@ extern "C"
 #endif
     extern char *controlsPath;
     extern char *configPath;
+    // CRC32 of the dumped ELF file, as the launcher sees it (parseArgs).
+    extern uint32_t elfCrc;
     int parseArgs(int argc, char *argv[], char *command, char *originalDir, char *gameELF, char *libraryPath);
     uint32_t getCrc32Mem(const uint8_t *data, size_t size);
     bool fileExists(const char *filename);

@@ -5,6 +5,844 @@
 // or encrypted the relocation info that would let ld.so fix them. Each slot
 // is resolved again by name (rtGame.h tables) before the game code runs.
 
+#ifdef _WIN32
+// Windows: the same tables, resolved through the loader's symbol resolver
+// (the bridges, the native Linux ELFs, the Windows DLLs, the GL), and the
+// game's code patched in place.
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <windows.h>
+
+#include "rawthrills.h"
+#include "../config/config.h"
+#include "../graphics/frameScale.h"
+#include "../log/log.h"
+#include "../elfLoader/glHooks.hpp"
+
+// The loader's symbol resolver (elfLoader/symbolResolver.cpp).
+void *bridgeResolveSymbol(const char *symbolName);
+void bridgeLoadNeededLibrary(const char *filename);
+void *bridgeGetLoadedLibrary(const char *dllName);
+int loaderImportSlots(const char **names, uint32_t **slots, int max);
+// The loaded game's own symbols and code (elfLoader/elfLoader.cpp).
+void *rtMainSymbol(const char *name);
+uint32_t rtMainSymbolSize(const char *name);
+void *rtMainDynamic(void);
+// The game's GL library (opengl32.dll or its stand-in, mainW.cpp).
+HMODULE rtGlDll(void);
+
+// The loader's GL and X11 wrappers patch Lindbergh games (resolution,
+// shaders, its own window) and need state set up by the Lindbergh init; Raw
+// Thrills games get the real GL/GLU/glut/GLX and Xlib functions, apart from
+// the loader's Raw Thrills shader fix.
+static int bypassPreloaded(const char *name)
+{
+    if (!strncmp(name, "gl", 2))
+        return strcmp(name, "glShaderSource") != 0;
+    return name[0] == 'X' && name[1] >= 'A' && name[1] <= 'Z';
+}
+
+// A window SDL was not asked to make resizable is pinned at its size, with
+// equal minimum and maximum size hints (The Walking Dead): drop them, so the
+// window can be resized and the frame scales with it (see frameScale.h).
+static int setWMNormalHints(void *display, unsigned long window, long *hints)
+{
+    (void)display;
+    (void)window;
+    if (hints)
+        hints[0] &= ~((1L << 4) | (1L << 5)); // XSizeHints.flags: PMinSize, PMaxSize
+    return 0;
+}
+
+// Functions the games get in place of the real ones, wherever they look
+// them up: the window scaling's GL entry points and the size hints above.
+static void *rtOverride(const char *name)
+{
+    if (name && !strcmp(name, "XSetWMNormalHints"))
+        return (void *)setWMNormalHints;
+    if (name && rtFrameOverride(name))
+        return rtFrameOverride(name);
+    if (name && rtCurrentGame() && rtCurrentGame()->override && rtCurrentGame()->override(name))
+        return rtCurrentGame()->override(name);
+    return frameScaleWrapper(name);
+}
+
+// The game's own dlsym (the envelope's): the resolver's, which finds the
+// same things the game's imports find.
+void *gameDlsym(void *handle, const char *name)
+{
+    (void)handle;
+    return bridgeResolveSymbol(name);
+}
+
+// ---------------------------------------------------------------------------
+// Lazy passthroughs for the ICD's extension entry points.
+//
+// The ICD's wglGetProcAddress may not answer before a GL context exists,
+// so at import time these slots would stay 0 and the game's first call
+// would fault. The game gets these forwarders instead: on the first call
+// (the game then has a context) they fetch the entry point and forward,
+// and if the ICD truly has no such function they no-op, logged once.
+// The game calls them cdecl; the ICD's entry points are stdcall, so each
+// forwarder is the cdecl front onto a stdcall back (the callee's ret 4n
+// removes the pushed arguments).
+// ---------------------------------------------------------------------------
+
+static void *glWgl(const char *name)
+{
+    static void *WINAPI (*wglGetProc)(const char *);
+    if (!wglGetProc)
+        wglGetProc = (void *WINAPI (*)(const char *))GetProcAddress(rtGlDll(), "wglGetProcAddress");
+    return wglGetProc ? (void *)wglGetProc(name) : NULL;
+}
+
+// One warning per name, for the ICD entry points that stay unfetchable.
+static void glLazyMissing(const char *name)
+{
+    static const char *warned[64];
+    int i;
+    for (i = 0; warned[i]; i++)
+    {
+        if (!strcmp(warned[i], name))
+            return;
+        if (i == 63)
+            break;
+    }
+    if (i < 64)
+        warned[i] = name;
+    log_warn("Raw Thrills: ICD has no %s, the call does nothing", name);
+}
+
+// i386: enums and sizes are 32-bit, so the argument types below are plain
+// int/unsigned int/pointers (the GL headers' typedefs would be the same).
+static void __cdecl lazy_glGenerateMipmap(unsigned int target)
+{
+    static void (WINAPI *real)(unsigned int);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int))glWgl("glGenerateMipmap");
+    if (real)
+    {
+        real(target);
+        return;
+    }
+    glLazyMissing("glGenerateMipmap");
+}
+static void __cdecl lazy_glGetActiveUniformsiv(unsigned int program, unsigned int index, int count,
+                                               const unsigned int *pname, int *params)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, int, const unsigned int *, int *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, int, const unsigned int *, int *))glWgl("glGetActiveUniformsiv");
+    if (real)
+    {
+        real(program, index, count, pname, params);
+        return;
+    }
+    glLazyMissing("glGetActiveUniformsiv");
+}
+static void __cdecl lazy_glUniformBlockBinding(unsigned int program, unsigned int index, unsigned int binding)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, unsigned int);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, unsigned int))glWgl("glUniformBlockBinding");
+    if (real)
+    {
+        real(program, index, binding);
+        return;
+    }
+    glLazyMissing("glUniformBlockBinding");
+}
+static unsigned int __cdecl lazy_glGetUniformBlockIndex(unsigned int program, const char *name)
+{
+    static unsigned int (WINAPI *real)(unsigned int, const char *);
+    if (!real)
+        real = (unsigned int (WINAPI *)(unsigned int, const char *))glWgl("glGetUniformBlockIndex");
+    if (real)
+        return real(program, name);
+    glLazyMissing("glGetUniformBlockIndex");
+    return 0; // GL_NO_INDEX
+}
+static void __cdecl lazy_glProgramBinary(unsigned int program, unsigned int binaryformat, const void *binary, int length)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, const void *, int);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, const void *, int))glWgl("glProgramBinary");
+    if (real)
+    {
+        real(program, binaryformat, binary, length);
+        return;
+    }
+    glLazyMissing("glProgramBinary");
+}
+static void __cdecl lazy_glGetActiveUniformBlockiv(unsigned int program, unsigned int index, unsigned int pname, int *params)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, unsigned int, int *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, unsigned int, int *))glWgl("glGetActiveUniformBlockiv");
+    if (real)
+    {
+        real(program, index, pname, params);
+        return;
+    }
+    glLazyMissing("glGetActiveUniformBlockiv");
+}
+static void __cdecl lazy_glGetActiveAttrib(unsigned int program, unsigned int index, int bufsize, int *length, int *size,
+                                           unsigned int *type, char *name)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, int, int *, int *, unsigned int *, char *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, int, int *, int *, unsigned int *, char *))glWgl("glGetActiveAttrib");
+    if (real)
+    {
+        real(program, index, bufsize, length, size, type, name);
+        return;
+    }
+    glLazyMissing("glGetActiveAttrib");
+}
+static void __cdecl lazy_glRenderbufferStorageMultisample(unsigned int target, int samples, unsigned int internalformat,
+                                                          int width, int height)
+{
+    static void (WINAPI *real)(unsigned int, int, unsigned int, int, int);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, int, unsigned int, int, int))glWgl("glRenderbufferStorageMultisample");
+    if (real)
+    {
+        real(target, samples, internalformat, width, height);
+        return;
+    }
+    glLazyMissing("glRenderbufferStorageMultisample");
+}
+static void __cdecl lazy_glGetActiveUniformBlockName(unsigned int program, unsigned int index, int bufsize, int *length,
+                                                     char *name)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, int, int *, char *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, int, int *, char *))glWgl("glGetActiveUniformBlockName");
+    if (real)
+    {
+        real(program, index, bufsize, length, name);
+        return;
+    }
+    glLazyMissing("glGetActiveUniformBlockName");
+}
+static void __cdecl lazy_glBlitFramebuffer(int srcx0, int srcy0, int srcx1, int srcy1, int dstx0, int dsty0, int dstx1,
+                                           int dsty1, unsigned int mask, unsigned int filter)
+{
+    static void (WINAPI *real)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+    if (!real)
+        real = (void (WINAPI *)(int, int, int, int, int, int, int, int, unsigned int, unsigned int))glWgl("glBlitFramebuffer");
+    if (real)
+    {
+        real(srcx0, srcy0, srcx1, srcy1, dstx0, dsty0, dstx1, dsty1, mask, filter);
+        return;
+    }
+    glLazyMissing("glBlitFramebuffer");
+}
+static void __cdecl lazy_glTexImage3D(unsigned int target, int level, int internalformat, int width, int height, int depth,
+                                      int border, unsigned int format, unsigned int type, const void *pixels)
+{
+    static void (WINAPI *real)(unsigned int, int, int, int, int, int, int, unsigned int, unsigned int, const void *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, int, int, int, int, int, int, unsigned int, unsigned int, const void *))glWgl("glTexImage3D");
+    if (real)
+    {
+        real(target, level, internalformat, width, height, depth, border, format, type, pixels);
+        return;
+    }
+    glLazyMissing("glTexImage3D");
+}
+static void __cdecl lazy_glGetRenderbufferParameteriv(unsigned int target, unsigned int pname, int *params)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, int *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, int *))glWgl("glGetRenderbufferParameteriv");
+    if (real)
+    {
+        real(target, pname, params);
+        return;
+    }
+    glLazyMissing("glGetRenderbufferParameteriv");
+}
+static void __cdecl lazy_glBindBufferBase(unsigned int target, unsigned int index)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int))glWgl("glBindBufferBase");
+    if (real)
+    {
+        real(target, index);
+        return;
+    }
+    glLazyMissing("glBindBufferBase");
+}
+static void __cdecl lazy_glBindFragDataLocation(unsigned int program, unsigned int color, const char *name)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, const char *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, const char *))glWgl("glBindFragDataLocation");
+    if (real)
+    {
+        real(program, color, name);
+        return;
+    }
+    glLazyMissing("glBindFragDataLocation");
+}
+static void __cdecl lazy_glGetActiveUniformName(unsigned int program, unsigned int index, int bufsize, int *length, char *name)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, int, int *, char *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, int, int *, char *))glWgl("glGetActiveUniformName");
+    if (real)
+    {
+        real(program, index, bufsize, length, name);
+        return;
+    }
+    glLazyMissing("glGetActiveUniformName");
+}
+static void __cdecl lazy_glProgramParameteri(unsigned int program, unsigned int pname, int value)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, int);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, int))glWgl("glProgramParameteri");
+    if (real)
+    {
+        real(program, pname, value);
+        return;
+    }
+    glLazyMissing("glProgramParameteri");
+}
+static void __cdecl lazy_glUniformMatrix3x4fv(unsigned int location, int count, int transpose, const float *value)
+{
+    static void (WINAPI *real)(unsigned int, int, int, const float *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, int, int, const float *))glWgl("glUniformMatrix3x4fv");
+    if (real)
+    {
+        real(location, count, transpose, value);
+        return;
+    }
+    glLazyMissing("glUniformMatrix3x4fv");
+}
+static void __cdecl lazy_glGetProgramBinary(unsigned int program, int bufsize, int *length, unsigned int *binaryformat,
+                                            void *binary)
+{
+    static void (WINAPI *real)(unsigned int, int, int *, unsigned int *, void *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, int, int *, unsigned int *, void *))glWgl("glGetProgramBinary");
+    if (real)
+    {
+        real(program, bufsize, length, binaryformat, binary);
+        return;
+    }
+    glLazyMissing("glGetProgramBinary");
+}
+static void __cdecl lazy_glBindAttribLocation(unsigned int program, unsigned int index, const char *name)
+{
+    static void (WINAPI *real)(unsigned int, unsigned int, const char *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, unsigned int, const char *))glWgl("glBindAttribLocation");
+    if (real)
+    {
+        real(program, index, name);
+        return;
+    }
+    glLazyMissing("glBindAttribLocation");
+}
+static void __cdecl lazy_glUniformMatrix4x3fv(unsigned int location, int count, int transpose, const float *value)
+{
+    static void (WINAPI *real)(unsigned int, int, int, const float *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, int, int, const float *))glWgl("glUniformMatrix4x3fv");
+    if (real)
+    {
+        real(location, count, transpose, value);
+        return;
+    }
+    glLazyMissing("glUniformMatrix4x3fv");
+}
+static void __cdecl lazy_glGetShaderSource(unsigned int shader, int bufsize, int *length, char *source)
+{
+    static void (WINAPI *real)(unsigned int, int, int *, char *);
+    if (!real)
+        real = (void (WINAPI *)(unsigned int, int, int *, char *))glWgl("glGetShaderSource");
+    if (real)
+    {
+        real(shader, bufsize, length, source);
+        return;
+    }
+    glLazyMissing("glGetShaderSource");
+}
+
+static const struct
+{
+    const char *name;
+    void *stub;
+} rtGlLazyTable[] = {
+    {"glGenerateMipmap", (void *)lazy_glGenerateMipmap},
+    {"glGetActiveUniformsiv", (void *)lazy_glGetActiveUniformsiv},
+    {"glUniformBlockBinding", (void *)lazy_glUniformBlockBinding},
+    {"glGetUniformBlockIndex", (void *)lazy_glGetUniformBlockIndex},
+    {"glProgramBinary", (void *)lazy_glProgramBinary},
+    {"glGetActiveUniformBlockiv", (void *)lazy_glGetActiveUniformBlockiv},
+    {"glGetActiveAttrib", (void *)lazy_glGetActiveAttrib},
+    {"glRenderbufferStorageMultisample", (void *)lazy_glRenderbufferStorageMultisample},
+    {"glGetActiveUniformBlockName", (void *)lazy_glGetActiveUniformBlockName},
+    {"glBlitFramebuffer", (void *)lazy_glBlitFramebuffer},
+    {"glTexImage3D", (void *)lazy_glTexImage3D},
+    {"glGetRenderbufferParameteriv", (void *)lazy_glGetRenderbufferParameteriv},
+    {"glBindBufferBase", (void *)lazy_glBindBufferBase},
+    {"glBindFragDataLocation", (void *)lazy_glBindFragDataLocation},
+    {"glGetActiveUniformName", (void *)lazy_glGetActiveUniformName},
+    {"glProgramParameteri", (void *)lazy_glProgramParameteri},
+    {"glUniformMatrix3x4fv", (void *)lazy_glUniformMatrix3x4fv},
+    {"glGetProgramBinary", (void *)lazy_glGetProgramBinary},
+    {"glBindAttribLocation", (void *)lazy_glBindAttribLocation},
+    {"glUniformMatrix4x3fv", (void *)lazy_glUniformMatrix4x3fv},
+    {"glGetShaderSource", (void *)lazy_glGetShaderSource},
+};
+
+static void *rtGlLazy(const char *name)
+{
+    for (size_t i = 0; i < sizeof(rtGlLazyTable) / sizeof(rtGlLazyTable[0]); i++)
+        if (!strcmp(name, rtGlLazyTable[i].name))
+            return rtGlLazyTable[i].stub;
+    return NULL;
+}
+
+// The games call their GL imports cdecl, while the system opengl32's entry
+// points are stdcall: they get the loader's pure-GL passthroughs (the
+// __cdecl front onto glad, see glHooks.cpp), the real GL without the
+// Lindbergh wrappers, the raw entry points only when there is no adapter,
+// and the lazy forwarders for what the ICD hides before a context exists.
+static void *rtGlImport(const char *name)
+{
+    void *p = GLHooks_RealGlProc(name);
+    if (!p)
+        p = rtRealGlProc(name);
+    return p ? p : rtGlLazy(name);
+}
+
+static void *resolveImport(const char *name, const char *version)
+{
+    (void)version; // glibc versions, meaningless here
+    if (!strcmp(name, "dlsym"))
+        return (void *)gameDlsym;
+    if (rtOverride(name))
+        return rtOverride(name);
+    // GL and GLU come from the ICD's passthroughs; glX and glut are the
+    // loader's own bridges (graphicsBridge), which the resolver finds.
+    if (name[0] == 'g' && name[1] == 'l' && name[2] != 'X' && !(name[2] == 'u' && name[3] == 't') &&
+        strcmp(name, "glShaderSource"))
+        return rtGlImport(name);
+    return bridgeResolveSymbol(name);
+}
+
+// The resolver already filled the main executable's imports as it loaded it:
+// send them the Raw Thrills hooks of rtOverride (the loader's GL and X11
+// wrappers are for the Lindbergh games, as below).
+static void *rtWrapper(const char *name)
+{
+    if (!strcmp(name, "glutSwapBuffers"))
+        return (void *)rtGlutSwapBuffers;
+    return NULL;
+}
+
+static void rebindImportsWindows(void)
+{
+    const RtGame *game = rtCurrentGame();
+    static char *names[4096];
+    static uint32_t *slots[4096];
+    int n, i;
+
+    if (!game || game->envelopeGot)
+        return; // a dump: its tables below say all
+    n = loaderImportSlots((const char **)names, slots, 4096);
+    for (i = 0; i < n; i++)
+    {
+        const char *name = names[i];
+        void *next;
+
+        if (!strcmp(name, "dlsym"))
+            *slots[i] = (uint32_t)(uintptr_t)gameDlsym;
+        else if (name[0] == 'g' && name[1] == 'l' && strcmp(name, "glShaderSource"))
+            *slots[i] = (uint32_t)(uintptr_t)((next = rtOverride(name)) ? next : rtGlImport(name));
+        else
+        {
+            next = rtOverride(name);
+            if (!next)
+                next = rtWrapper(name);
+            if (!next || bypassPreloaded(name))
+                continue;
+            *slots[i] = (uint32_t)(uintptr_t)next;
+        }
+    }
+}
+
+int rtFixImports(const RtGame *game)
+{
+    int missing = 0;
+    size_t i;
+
+    // KEEP_ASPECT_RATIO is for the games made for a 4:3 monitor (frameAspect)
+    // and those turned upright (frameTurn): the others (Jurassic Park's fixed
+    // frame) fill the window.
+    frameScaleInit((void *(*)(const char *))rtRealGlProc,
+                   game->frameAspect[0] || game->frameTurn ? getConfig()->keepAspectRatio : 0);
+    // A dump's DT_NEEDED is the envelope's (stripped or the cabinet's): the
+    // SDL it links is not loaded, and its imports would stay unfound.
+    if (game->envelopeGot)
+        for (i = 0; i < game->gameImportCount; i++)
+            if (!strcmp(game->gameImports[i].name, "SDL_SetVideoMode"))
+            {
+                bridgeLoadNeededLibrary("libSDL-1.2.so.0");
+                break;
+            }
+    for (const char *const *lib = game->extraLibs; lib && *lib; lib++)
+        bridgeLoadNeededLibrary(*lib);
+    rebindImportsWindows();
+
+    uint32_t *envelopeGot = (uint32_t *)(uintptr_t)game->envelopeGot;
+    for (i = 0; i < game->envelopeImportCount; i++)
+    {
+        const RtEnvelopeImport *imp = &game->envelopeImports[i];
+        void *p = resolveImport(imp->name, NULL);
+        if (!p)
+        {
+            log_warn("Raw Thrills: envelope import %s not found", imp->name);
+            missing++;
+            continue;
+        }
+        envelopeGot[imp->slot] = (uint32_t)(uintptr_t)p;
+    }
+    if (game->envelopeSelfSlot >= 0)
+        envelopeGot[game->envelopeSelfSlot] = game->envelopeSelfTarget;
+
+    for (i = 0; i < game->gameImportCount; i++)
+    {
+        const RtGameImport *imp = &game->gameImports[i];
+        void *p = resolveImport(imp->name, imp->version);
+        if (!p)
+        {
+            // Weak hooks such as __gmon_start__ are legitimately absent.
+            if (strcmp(imp->name, "__gmon_start__") != 0)
+            {
+                log_warn("Raw Thrills: game import %s@%s not found", imp->name, imp->version);
+                missing++;
+            }
+            continue;
+        }
+        *(uint32_t *)(uintptr_t)imp->slot = (uint32_t)(uintptr_t)p;
+    }
+
+    log_info("Raw Thrills: import tables rebuilt (%d missing)", missing);
+    return missing;
+}
+
+// Hooks simply overwrite a function entry with a jmp to the replacement.
+// Game function by name: listed in the game's descriptor (stripped games,
+// or exports that are only envelope stubs), else exported.
+static void *lookup(const char *name)
+{
+    const RtGame *game = rtCurrentGame();
+    for (const RtSymbol *s = game ? game->symbols : NULL; s && s->name; s++)
+        if (!strcmp(s->name, name))
+            return (void *)(uintptr_t)s->address;
+    return rtMainSymbol(name);
+}
+
+void *rtSymbol(const char *name)
+{
+    return lookup(name);
+}
+
+uint32_t rtSymbolSize(const char *name)
+{
+    return rtMainSymbolSize(name);
+}
+
+void rtDetourAddress(uint32_t address, void *replacement)
+{
+    uint8_t *target = (uint8_t *)(uintptr_t)address;
+
+    // Games that are not dumps map their code read-only.
+    uintptr_t page = address & ~(uintptr_t)0xfff;
+    SIZE_T size = (address + 5 - page + 0xfff) & ~(uintptr_t)0xfff;
+    DWORD old;
+    if (!VirtualProtect((void *)page, size, PAGE_EXECUTE_READWRITE, &old))
+        log_warn("Raw Thrills: cannot make %#x writable", address);
+    target[0] = 0xe9;
+    *(int32_t *)(target + 1) = (int32_t)((uint8_t *)replacement - (target + 5));
+}
+
+int rtDetour(const char *name, void *replacement)
+{
+    void *target = lookup(name);
+    if (!target)
+    {
+        log_warn("Raw Thrills: hook target %s not found", name);
+        return -1;
+    }
+    rtDetourAddress((uint32_t)(uintptr_t)target, replacement);
+    return 0;
+}
+
+// Copy the first prologueLength bytes of a function (whole, position
+// independent instructions) and jump back after them, so the original can
+// still be called once its entry is detoured.
+void *rtTrampoline(const char *name, size_t prologueLength)
+{
+    uint8_t *target = lookup(name);
+    if (!target)
+        return NULL;
+    uint8_t *tramp = VirtualAlloc(NULL, 4096, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (!tramp)
+        return NULL;
+    memcpy(tramp, target, prologueLength);
+    tramp[prologueLength] = 0xe9;
+    *(int32_t *)(tramp + prologueLength + 1) =
+        (int32_t)((target + prologueLength) - (tramp + prologueLength + 5));
+    return tramp;
+}
+
+// MinGW has no <elf.h>: the raw 32-bit layout of the game's own dynamic
+// section (relocated, at its fixed address), read below for the .bss
+// clearing and the library replacement.
+typedef struct
+{
+    int32_t d_tag;
+    union
+    {
+        uint32_t d_val;
+        uint32_t d_ptr;
+    } d_un;
+} rtElf32_Dyn;
+typedef struct
+{
+    uint32_t r_offset;
+    uint32_t r_info;
+} rtElf32_Rel;
+typedef struct
+{
+    uint32_t st_name;
+    uint32_t st_value;
+    uint32_t st_size;
+    uint8_t st_info;
+    uint8_t st_other;
+    uint16_t st_shndx;
+} rtElf32_Sym;
+#define rtDT_NULL 0
+#define rtDT_HASH 4
+#define rtDT_STRTAB 5
+#define rtDT_SYMTAB 6
+#define rtDT_REL 17
+#define rtDT_RELSZ 18
+#define rtDT_GNU_HASH 0x6ffffef5
+#define rtR_386_COPY 5
+#define rtSHN_UNDEF 0
+#define rtSTT_FUNC 2
+#define rtELF32_R_SYM(info) ((info) >> 8)
+#define rtELF32_R_TYPE(info) ((info) & 0xff)
+#define rtELF32_ST_TYPE(info) ((info) & 0xf)
+
+// The loaded image (fixed base, no ASLR): a plausible range for the
+// relocated dynamic-section pointers, to reject a wild read.
+static int rtAddrInImage(uint32_t a)
+{
+    return a >= 0x08000000 && a < 0x0c000000;
+}
+
+// A dump taken once the game was running also holds the runtime state of
+// its .bss (e.g. an initialized SDL with pointers into a heap that no longer
+// exists). This runs before the game's constructors, as the kernel would
+// hand it over: zero it, keeping the objects the loader copied in
+// (R_386_COPY).
+void rtClearBss(const RtGame *game)
+{
+    const rtElf32_Dyn *dyn;
+    const rtElf32_Rel *rel = NULL;
+    const rtElf32_Sym *symtab = NULL;
+    uint32_t relSize = 0;
+    struct
+    {
+        uint32_t address;
+        uint32_t size;
+        uint8_t *data;
+    } saved[32];
+    int nsaved = 0;
+
+    if (!game->bssStart)
+        return;
+    // Preserve the copy-relocation objects the loader put in .bss, when the
+    // relocation section is readable; .bss is always zeroed (the dump holds
+    // stale runtime state).
+    dyn = (const rtElf32_Dyn *)rtMainDynamic();
+    if (dyn && rtAddrInImage((uint32_t)(uintptr_t)dyn))
+    {
+        for (; dyn->d_tag != rtDT_NULL; dyn++)
+        {
+            if (dyn->d_tag == rtDT_REL)
+                rel = (const rtElf32_Rel *)(uintptr_t)dyn->d_un.d_ptr;
+            else if (dyn->d_tag == rtDT_RELSZ)
+                relSize = dyn->d_un.d_val;
+            else if (dyn->d_tag == rtDT_SYMTAB)
+                symtab = (const rtElf32_Sym *)(uintptr_t)dyn->d_un.d_ptr;
+        }
+        if (rel && symtab && rtAddrInImage((uint32_t)(uintptr_t)rel) &&
+            rtAddrInImage((uint32_t)(uintptr_t)symtab))
+        {
+            for (uint32_t i = 0; i < relSize / sizeof(*rel); i++)
+            {
+                const rtElf32_Sym *sym = &symtab[rtELF32_R_SYM(rel[i].r_info)];
+                if (rtELF32_R_TYPE(rel[i].r_info) != rtR_386_COPY ||
+                    rel[i].r_offset < game->bssStart || rel[i].r_offset >= game->bssEnd)
+                    continue;
+                if (nsaved == (int)(sizeof(saved) / sizeof(saved[0])))
+                {
+                    log_warn("Raw Thrills: too many .bss copy objects to keep");
+                    break;
+                }
+                saved[nsaved].address = rel[i].r_offset;
+                saved[nsaved].size = sym->st_size;
+                saved[nsaved].data = malloc(sym->st_size ? sym->st_size : 1);
+                if (!saved[nsaved].data)
+                    break;
+                if (sym->st_size)
+                    memcpy(saved[nsaved].data, (void *)(uintptr_t)rel[i].r_offset, sym->st_size);
+                nsaved++;
+            }
+        }
+    }
+    memset((void *)(uintptr_t)game->bssStart, 0, game->bssEnd - game->bssStart);
+    for (int i = 0; i < nsaved; i++)
+        if (saved[i].size)
+            memcpy((void *)(uintptr_t)saved[i].address, saved[i].data, saved[i].size);
+    for (int i = 0; i < nsaved; i++)
+        free(saved[i].data);
+    if (nsaved)
+        log_debug("Raw Thrills: .bss cleared, %d copy objects kept", nsaved);
+}
+
+// SDL 2 pins a window it was not asked to make resizable at its size, with
+// equal minimum and maximum size hints: the games' windows are made
+// resizable, so that the frame scales with them (see frameScale.h).
+#define SDL_WINDOW_RESIZABLE 0x20
+static void *(*sdlCreateWindowReal)(const char *, int, int, int, int, uint32_t);
+
+static void *sdlCreateWindow(const char *title, int x, int y, int w, int h, uint32_t flags)
+{
+    return sdlCreateWindowReal(title, x, y, w, h, flags | SDL_WINDOW_RESIZABLE);
+}
+
+// And its swap gets the frame hook (window scaling, gun border).
+static void (*sdlGlSwapWindowReal)(void *);
+
+static void sdlGlSwapWindow(void *window)
+{
+    rtSdlGlSwapWindow(sdlGlSwapWindowReal, window);
+}
+
+// Number of dynamic symbols, from DT_HASH (nchain) or DT_GNU_HASH.
+static uint32_t dynSymCount(const rtElf32_Dyn *dyn)
+{
+    for (; dyn->d_tag != rtDT_NULL; dyn++)
+    {
+        if (dyn->d_tag == rtDT_HASH)
+            return ((const uint32_t *)dyn->d_un.d_ptr)[1];
+        if (dyn->d_tag == rtDT_GNU_HASH)
+            return ((const uint32_t *)dyn->d_un.d_ptr)[0];
+    }
+    return 0;
+}
+
+int rtReplaceLib(const RtGame *game)
+{
+    const rtElf32_Dyn *dyn, *dynStart;
+    const rtElf32_Sym *symtab = NULL;
+    const char *strtab = NULL;
+    size_t prefixLen;
+    HMODULE lib = NULL;
+    char exePath[MAX_PATH], libPath[MAX_PATH + 64];
+    uint32_t count;
+    int replaced = 0, missing = 0;
+
+    if (!game->replacedLib)
+        return 0;
+    if (!strstr(game->replacedLib, "SDL2"))
+    {
+        log_error("Raw Thrills: %s replacement not ported, the game may not start", game->replacedLib);
+        return -1;
+    }
+    // The descriptor carries the Linux name; the Windows stand-in in ll-deps.
+    if (!GetModuleFileNameA(NULL, exePath, MAX_PATH) || !(strchr(exePath, '\\')))
+    {
+        log_error("Raw Thrills: cannot find the SDL2 stand-in");
+        return -1;
+    }
+    *strrchr(exePath, '\\') = 0;
+    snprintf(libPath, sizeof(libPath), "%s\\ll-deps\\SDL2.dll", exePath);
+    if (!(lib = LoadLibraryA(libPath)))
+    {
+        log_error("Raw Thrills: cannot load %s", libPath);
+        return -1;
+    }
+    dynStart = (const rtElf32_Dyn *)rtMainDynamic();
+    if (!dynStart || !rtAddrInImage((uint32_t)(uintptr_t)dynStart))
+    {
+        log_error("Raw Thrills: cannot read the dynamic section");
+        return -1;
+    }
+    dyn = dynStart;
+    for (; dyn->d_tag != rtDT_NULL; dyn++)
+    {
+        if (dyn->d_tag == rtDT_SYMTAB)
+            symtab = (const rtElf32_Sym *)(uintptr_t)dyn->d_un.d_ptr;
+        else if (dyn->d_tag == rtDT_STRTAB)
+            strtab = (const char *)(uintptr_t)dyn->d_un.d_ptr;
+    }
+    if (!symtab || !strtab || !rtAddrInImage((uint32_t)(uintptr_t)symtab) ||
+        !rtAddrInImage((uint32_t)(uintptr_t)strtab))
+    {
+        log_error("Raw Thrills: bad symbol table");
+        return -1;
+    }
+    prefixLen = strlen(game->replacedLibPrefix);
+    count = dynSymCount(dynStart);
+    for (uint32_t i = 1; i < count; i++)
+    {
+        const rtElf32_Sym *sym = &symtab[i];
+        const char *name = strtab + sym->st_name;
+        void *target;
+
+        if (sym->st_shndx == rtSHN_UNDEF || rtELF32_ST_TYPE(sym->st_info) != rtSTT_FUNC ||
+            strncmp(name, game->replacedLibPrefix, prefixLen))
+            continue;
+        if (!(target = (void *)GetProcAddress(lib, name)))
+        {
+            missing++;
+            continue;
+        }
+        if (!strcmp(name, "SDL_CreateWindow"))
+        {
+            sdlCreateWindowReal = target;
+            target = (void *)sdlCreateWindow;
+        }
+        else if (!strcmp(name, "SDL_GL_SwapWindow"))
+        {
+            sdlGlSwapWindowReal = target;
+            target = (void *)sdlGlSwapWindow;
+        }
+        rtDetourAddress(sym->st_value, target);
+        replaced++;
+    }
+    log_info("Raw Thrills: %d %s functions sent to %s (%d not found)", replaced, game->replacedLibPrefix,
+             game->replacedLib, missing);
+    return 0;
+}
+
+#else // __linux__
+
 #include <dlfcn.h>
 #include <elf.h>
 #include <link.h>
@@ -538,3 +1376,5 @@ int rtReplaceLib(const RtGame *game)
              game->replacedLib, missing);
     return 0;
 }
+
+#endif

@@ -6,6 +6,11 @@
 
 struct JVSIO;
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 // One slot of an envelope runtime GOT: slot index -> symbol name.
 typedef struct
 {
@@ -504,5 +509,15 @@ const RtGame *rtGetGameByFileCrc(uint32_t fileCrc32);
 // configPath: the loader's configuration, for the games taking their video
 // mode on the command line (sizeArgument).
 void rtPrepareCommand(char *command, size_t size, uint32_t fileCrc32, const char *configPath);
+
+// Windows: the game runs in the loader's process, so instead of rewriting an
+// exec command, out receives the path of a patched copy of a dump that would
+// not run as is (MotoGP's rebuilt ELF). 0 on success, -1 when the dump is
+// loaded as is (or the copy could not be prepared).
+int rtPrepareElfCopy(const char *elfPath, char *out, size_t outSize, uint32_t fileCrc32);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // RT_GAME_H

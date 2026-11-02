@@ -25,7 +25,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/ioctl.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define FIONREAD 0x541b // the Linux value the game passes
+#endif
 
 #include "namcoN2.h"
 #include "../hardware/lindbergh/jvs.h"
@@ -93,7 +99,13 @@ int namcoN2KickbackOpen(int (*realOpen)(const char *, int, ...))
     pthread_mutex_lock(&lock);
     trace = getenv("NAMCO_KB_TRACE") != NULL;
     if (kbFd < 0)
+    {
+#ifdef _WIN32
+        kbFd = realOpen("nul", O_RDWR);
+#else
         kbFd = realOpen("/dev/null", O_RDWR);
+#endif
+    }
     commandLen = replyLen = volunteeredLen = 0;
     pthread_mutex_unlock(&lock);
     if (trace)

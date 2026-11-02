@@ -45,6 +45,44 @@ namespace Alsa2SdlBridge
         MAP("snd_pcm_state", shared_snd_pcm_state);
         MAP("snd_pcm_format_width", shared_snd_pcm_format_width);
         MAP("snd_strerror", shared_snd_strerror);
+
+        // The rest of the ALSA API the g6 games import.
+        MAP("snd_pcm_hw_params_copy", shared_snd_pcm_hw_params_copy);
+        MAP("snd_pcm_hw_params_get_buffer_size", shared_snd_pcm_hw_params_get_buffer_size);
+        MAP("snd_pcm_hw_params_get_channels", shared_snd_pcm_hw_params_get_channels);
+        MAP("snd_pcm_hw_params_get_periods", shared_snd_pcm_hw_params_get_periods);
+        MAP("snd_pcm_hw_params_get_period_size", shared_snd_pcm_hw_params_get_period_size);
+        MAP("snd_pcm_hw_params_set_periods_near", shared_snd_pcm_hw_params_set_periods_near);
+        MAP("snd_pcm_hw_params_sizeof", shared_snd_pcm_hw_params_sizeof);
+        MAP("snd_pcm_sw_params_sizeof", shared_snd_pcm_sw_params_sizeof);
+        MAP("snd_pcm_nonblock", shared_snd_pcm_nonblock);
+        MAP("snd_pcm_recover", shared_snd_pcm_recover);
+
+        // PulseAudio, routed to the same SDL audio stream.
+        MAP("pa_channel_map_init_auto", shared_pa_channel_map_init_auto);
+        MAP("pa_mainloop_new", shared_pa_mainloop_new);
+        MAP("pa_mainloop_get_api", shared_pa_mainloop_get_api);
+        MAP("pa_mainloop_free", shared_pa_mainloop_free);
+        MAP("pa_mainloop_iterate", shared_pa_mainloop_iterate);
+        MAP("pa_context_new", shared_pa_context_new);
+        MAP("pa_context_set_name", shared_pa_context_set_name);
+        MAP("pa_context_connect", shared_pa_context_connect);
+        MAP("pa_context_get_state", shared_pa_context_get_state);
+        MAP("pa_context_disconnect", shared_pa_context_disconnect);
+        MAP("pa_context_unref", shared_pa_context_unref);
+        MAP("pa_stream_new", shared_pa_stream_new);
+        MAP("pa_stream_connect_playback", shared_pa_stream_connect_playback);
+        MAP("pa_stream_write", shared_pa_stream_write);
+        MAP("pa_stream_drain", shared_pa_stream_drain);
+        MAP("pa_stream_get_state", shared_pa_stream_get_state);
+        MAP("pa_stream_disconnect", shared_pa_stream_disconnect);
+        MAP("pa_stream_writable_size", shared_pa_stream_writable_size);
+        MAP("pa_stream_unref", shared_pa_stream_unref);
+        MAP("pa_simple_new", shared_pa_simple_new);
+        MAP("pa_simple_free", shared_pa_simple_free);
+        MAP("pa_operation_cancel", shared_pa_operation_cancel);
+        MAP("pa_operation_get_state", shared_pa_operation_get_state);
+        MAP("pa_operation_unref", shared_pa_operation_unref);
     }
 } // namespace Alsa2SdlBridge
 

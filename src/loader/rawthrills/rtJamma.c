@@ -25,10 +25,14 @@
 // window (the pointer is put back at its centre), the evdev mice's and,
 // as a speed, the SDL gamepad's left stick.
 
+#ifndef _WIN32
 #include <dlfcn.h>
+#include <unistd.h>
+#else
+#include <windows.h>
+#endif
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #include <SDL3/SDL_gamepad.h>
 
@@ -36,6 +40,7 @@
 #include "../common/desktopInput.h"
 #include "../config/config.h"
 #include "../graphics/frameScale.h"
+#include "../graphics/glutBridge.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../input/trackball.h"
 #include "../log/log.h"
@@ -279,22 +284,117 @@ static void mouse(int button, int state, int x, int y)
         desktopSwitch(PLAYER_1, bits[button], state == GLUT_DOWN);
 }
 
+#ifdef _WIN32
+// The game's glut is the loader's bridge (graphics/glutBridge.c), which does
+// not wire the keyboard and mouse to the window: the raw input is polled each
+// frame and the desktop JVS state filled, the same way the Linux glut
+// callbacks would (keyboard, special, mouse and motion above). QWERTY
+// physical keys: the digit row and the letters sit on the same keys on AZERTY
+// too, so 1/i, 2/o, 5/u, 6 and p work on both layouts.
+#define HELD(k) ((GetAsyncKeyState(k) & 0x8000) != 0)
+
+// Player 1's gun: the pointer in the game window's client area, its buttons.
+// The position is kept while the pointer leaves the window, as glut fires
+// motion only inside it (buttons still work).
+static void pollDesktopPointer(void)
+{
+    HWND hwnd = GetForegroundWindow();
+    RECT rc;
+    POINT topLeft, pt;
+    int w, h, x, y;
+
+    if (!hwnd || !GetClientRect(hwnd, &rc))
+        return;
+    topLeft.x = rc.left;
+    topLeft.y = rc.top;
+    if (!ClientToScreen(hwnd, &topLeft))
+        return;
+    w = rc.right - rc.left;
+    h = rc.bottom - rc.top;
+    desktopSwitch(PLAYER_1, BUTTON_1, HELD(VK_LBUTTON));
+    desktopSwitch(PLAYER_1, BUTTON_3, HELD(VK_MBUTTON));
+    desktopSwitch(PLAYER_1, BUTTON_2, HELD(VK_RBUTTON));
+    if (w <= 1 || h <= 1 || !GetCursorPos(&pt))
+        return;
+    x = pt.x - topLeft.x;
+    y = pt.y - topLeft.y;
+    if (x < 0 || x >= w || y < 0 || y >= h)
+        return;
+    // Keep off the extremes, which mean off the screen (as motion does).
+    desktop.state.analogueChannel[ANALOGUE_1] = 1 + (int)((double)x * (DESKTOP_ANALOGUE_MAX - 2) / (w - 1));
+    desktop.state.analogueChannel[ANALOGUE_2] = 1 + (int)((double)y * (DESKTOP_ANALOGUE_MAX - 2) / (h - 1));
+}
+
+static void pollDesktopInput(void)
+{
+    // The board's switches, from the QWERTY physical keys (the letter
+    // virtual keys are the uppercase ASCII values).
+    desktopSwitch(PLAYER_1, BUTTON_START, HELD('1') || HELD('I'));
+    desktopSwitch(PLAYER_2, BUTTON_START, HELD('2') || HELD('O'));
+    desktopSwitch(PLAYER_1, BUTTON_SERVICE, HELD('P') || HELD(VK_F1));
+    desktopSwitch(SYSTEM, BUTTON_TEST, HELD(VK_F2));
+    desktopSwitch(PLAYER_1, BUTTON_UP, HELD(VK_UP));
+    desktopSwitch(PLAYER_1, BUTTON_DOWN, HELD(VK_DOWN));
+    desktopCoinHeld[0] = HELD('5') || HELD('U');
+    desktopCoinHeld[1] = HELD('6');
+    // A game's own desktop keys (Deal or No Deal's panel): Enter, space, d,
+    // n and b.
+    (void)gameKey('\r', 0, HELD(VK_RETURN));
+    (void)gameKey(' ', 0, HELD(VK_SPACE));
+    (void)gameKey('d', 0, HELD('D'));
+    (void)gameKey('n', 0, HELD('N'));
+    (void)gameKey('b', 0, HELD('B'));
+    if (HELD(VK_ESCAPE))
+        quit();
+    if (HELD(VK_F4) && glutGetModifiers && (glutGetModifiers() & GLUT_ACTIVE_ALT))
+        quit();
+    pollDesktopPointer();
+}
+#undef HELD
+#endif
+
 // The callbacks go to the window the game opened, current by now. With
 // evdev input, only the quit keys.
 static void installWindowInput(void)
 {
-    void (*keyboardFunc)(void (*)(unsigned char, int, int)) = dlsym(RTLD_NEXT, "glutKeyboardFunc");
-    void (*keyboardUpFunc)(void (*)(unsigned char, int, int)) = dlsym(RTLD_NEXT, "glutKeyboardUpFunc");
-    void (*specialFunc)(void (*)(int, int, int)) = dlsym(RTLD_NEXT, "glutSpecialFunc");
-    void (*specialUpFunc)(void (*)(int, int, int)) = dlsym(RTLD_NEXT, "glutSpecialUpFunc");
-    void (*mouseFunc)(void (*)(int, int, int, int)) = dlsym(RTLD_NEXT, "glutMouseFunc");
-    void (*motionFunc)(void (*)(int, int)) = dlsym(RTLD_NEXT, "glutMotionFunc");
-    void (*passiveMotionFunc)(void (*)(int, int)) = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
-    void (*ignoreKeyRepeat)(int) = dlsym(RTLD_NEXT, "glutIgnoreKeyRepeat");
+    void (*keyboardFunc)(void (*)(unsigned char, int, int));
+    void (*keyboardUpFunc)(void (*)(unsigned char, int, int));
+    void (*specialFunc)(void (*)(int, int, int));
+    void (*specialUpFunc)(void (*)(int, int, int));
+    void (*mouseFunc)(void (*)(int, int, int, int));
+    void (*motionFunc)(void (*)(int, int));
+    void (*passiveMotionFunc)(void (*)(int, int));
+    void (*ignoreKeyRepeat)(int) = NULL;
+
+#ifdef _WIN32
+    // The game's glut is the loader's bridge (see graphics/glutBridge.c),
+    // which does not wire the keyboard and mouse to the window: the raw input
+    // is polled each frame instead (pollDesktopInput, from jammaPoll). The
+    // callbacks are kept, in case the bridge wires them up.
+    keyboardFunc = bridgeGlutKeyboardFunc;
+    keyboardUpFunc = bridgeGlutKeyboardUpFunc;
+    specialFunc = bridgeGlutSpecialFunc;
+    specialUpFunc = bridgeGlutSpecialUpFunc;
+    mouseFunc = bridgeGlutMouseFunc;
+    motionFunc = bridgeGlutMotionFunc;
+    passiveMotionFunc = bridgeGlutPassiveMotionFunc;
+    glutGet = bridgeGlutGet;
+    glutGetModifiers = bridgeGlutGetModifiers;
+    return;
+#else
+    keyboardFunc = dlsym(RTLD_NEXT, "glutKeyboardFunc");
+    keyboardUpFunc = dlsym(RTLD_NEXT, "glutKeyboardUpFunc");
+    specialFunc = dlsym(RTLD_NEXT, "glutSpecialFunc");
+    specialUpFunc = dlsym(RTLD_NEXT, "glutSpecialUpFunc");
+    mouseFunc = dlsym(RTLD_NEXT, "glutMouseFunc");
+    motionFunc = dlsym(RTLD_NEXT, "glutMotionFunc");
+    passiveMotionFunc = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
+    ignoreKeyRepeat = dlsym(RTLD_NEXT, "glutIgnoreKeyRepeat");
 
     glutGet = dlsym(RTLD_NEXT, "glutGet");
     glutGetModifiers = dlsym(RTLD_NEXT, "glutGetModifiers");
     *(void **)&glutWarpPointer = dlsym(RTLD_NEXT, "glutWarpPointer");
+#endif
     if (!keyboardFunc || !keyboardUpFunc || !specialFunc || !specialUpFunc || !mouseFunc || !motionFunc ||
         !passiveMotionFunc || !glutGet)
     {
@@ -624,6 +724,11 @@ static int jammaPoll(void)
         started = 1;
         installWindowInput();
     }
+#ifdef _WIN32
+    // Fill the desktop's switches and gun from the keyboard and the pointer.
+    if (!evdevInput)
+        pollDesktopInput();
+#endif
     updateSwitches(io);
     if (jammaGame->jammaTrackballX)
         updateTrackball();

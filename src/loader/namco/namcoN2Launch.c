@@ -7,6 +7,10 @@
 
 #include "namcoN2.h"
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 // The cabinet command line of the N2 games that take one (the arguments and
 // working directory in their descriptor). The launcher runs the game's own
 // ELF from the game's root; this appends the arguments (unless a test-mode

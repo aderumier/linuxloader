@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <winsock2.h>
 #include <windows.h>
+#include <psapi.h>
 #include <libgen.h>
 
 #include "glad/gl.h"
@@ -17,6 +18,7 @@
 #include "elfLoader/gccBridge.hpp"
 #include "elfLoader/graphicsBridge.hpp"
 #include "elfLoader/pthreadBridge.hpp"
+#include "elfLoader/rtBridge.hpp"
 #include "elfLoader/regexBridge.hpp"
 #include "elfLoader/termiosBridge.hpp"
 #include "elfLoader/networkBridge.hpp"
@@ -30,6 +32,7 @@
 #include "patching/patch.h"
 #include "input/sdlInput.h"
 #include "mainShared.h"
+#include "rawthrills/rawthrills.h"
 
 std::string g_absoluteElfPath;
 uint32_t partialElfCrc = 0;
@@ -37,6 +40,10 @@ uint32_t partialElfCrc = 0;
 extern SDLControllers sdlJoysticks;
 
 extern int gGrp;
+
+// Deal or No Deal's parallel port panel (rawthrills/rtDond.c): 1 when the
+// in/out is the panel's port (0x378..0x37a), else 0.
+extern "C" int rtDondPortIo(int in, uint16_t port, uint32_t *eax);
 
 HMODULE hGlDLL = NULL;
 
@@ -47,11 +54,65 @@ LONG CALLBACK myVectoredHandler(PEXCEPTION_POINTERS ExceptionInfo)
 
     if (exceptionCode == EXCEPTION_ACCESS_VIOLATION || exceptionCode == EXCEPTION_PRIV_INSTRUCTION) {
         uint8_t* pint = (uint8_t*)ctx->Eip;
-        if (pint && !IsBadReadPtr(pint, 2) && pint[0] == 0xCD && pint[1] == 0x80) {        
-            if (ctx->Eax == 0xE0) { 
-                ctx->Eax = (DWORD)PthreadEmu::pthreadSelf();
+        if (pint && !IsBadReadPtr(pint, 2)) {
+            if (pint[0] == 0xCD && pint[1] == 0x80) {
+                if (ctx->Eax == 0xE0) {
+                    ctx->Eax = (DWORD)PthreadEmu::pthreadSelf();
+                    ctx->Eip += 2;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+            // Deal or No Deal's parallel port panel: in %dx,%al / out %al,%dx
+            // (a privileged instruction) on 0x378..0x37a. Two bytes.
+            else if ((pint[0] == 0xEC || pint[0] == 0xEE) &&
+                     rtDondPortIo(pint[0] == 0xEC, (uint16_t)(ctx->Edx & 0xFFFF), (uint32_t *)&ctx->Eax)) {
                 ctx->Eip += 2;
                 return EXCEPTION_CONTINUE_EXECUTION;
+            }
+        }
+    }
+
+    // Temporary: the Roxor (Tux Racer) Windows boot trace, unbuffered:
+    // only on, with ROXOR_TRACE set (it writes a line per exception).
+    if (getenv("ROXOR_TRACE"))
+    {
+        char buf[256];
+        int n = snprintf(buf, sizeof(buf), "X%08lX %08lX %08lX %08lX\n",
+                         exceptionCode, ctx->Eip, ctx->Esp, ctx->Ebp);
+        // The faulting module (its name and the offset into it).
+        HMODULE modules[512];
+        DWORD cb = 0, sz = 0;
+        if (EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &cb))
+        {
+            for (DWORD m = 0; m < cb; m += sizeof(modules[0]))
+            {
+                MODULEINFO mi;
+                if (!GetModuleInformation(GetCurrentProcess(), modules[m], &mi, sizeof(mi)))
+                    continue;
+                if (ctx->Eip >= (DWORD)(uintptr_t)mi.lpBaseOfDll &&
+                    ctx->Eip < (DWORD)(uintptr_t)(char *)mi.lpBaseOfDll + mi.SizeOfImage)
+                {
+                    char name[MAX_PATH];
+                    if (GetModuleBaseNameA(GetCurrentProcess(), modules[m], name, sizeof(name)))
+                        n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%s +%lX\n", name,
+                                      ctx->Eip - (DWORD)(uintptr_t)mi.lpBaseOfDll);
+                    break;
+                }
+            }
+        }
+        FILE *f = fopen("roxor_trace.log", "a");
+        if (f)
+        {
+            fwrite(buf, 1, (size_t)n, f);
+            fclose(f);
+        }
+        if (getenv("ROXOR_PAUSE"))
+        {
+            static int paused;
+            if (!paused)
+            {
+                paused = 1;
+                Sleep(30000);
             }
         }
     }
@@ -73,11 +134,13 @@ void initBridges()
     Alsa2SdlBridge::initBridges();
     RegexBridge::initBridges();
     MathBridge::initBridges();
+    // Last, so its popen/system win over the libc bridge's (see rtBridge.cpp).
+    RtBridge::initBridges();
 }
 
 int main(int argc, char *argv[], char *envp[])
 {
-    logSetMinLevel(LOG_WARN);
+    logSetMinLevel(LOG_DEBUG);
 
     char command[MAX_PATH_LENGTH] = {0};
     char originalDir[MAX_PATH_LENGTH] = {0};
@@ -105,10 +168,25 @@ int main(int argc, char *argv[], char *envp[])
         strcpy(elfPath, gameELF);
     }
 
+    // Raw Thrills dumps that the loader cannot run as is (MotoGP's rebuilt
+    // ELF: see rawthrills/rtLaunch.c) load from a patched copy, in the
+    // loader's cache directory; their libraries stay in the original game
+    // directory, which the search paths below must keep pointing to.
+    char originalElfPath[MAX_PATH_LENGTH];
+    strncpy(originalElfPath, elfPath, sizeof(originalElfPath) - 1);
+    originalElfPath[sizeof(originalElfPath) - 1] = '\0';
+    char patchedElfPath[MAX_PATH_LENGTH] = "";
+    if (rtPrepareElfCopy(elfPath, patchedElfPath, sizeof(patchedElfPath), elfCrc) == 0)
+        strncpy(elfPath, patchedElfPath, sizeof(elfPath) - 1);
+
     ElfLoader::PreReserveAddressSpace(elfPath);
 
     log_info("Initializing library search paths...\n");
-    GetCurrentDirectoryA(MAX_PATH_LENGTH, gamePath);
+    // The game's directory, as the path of its executable (the search
+    // paths are the directory's, and its lib\ subdirectory's; the game
+    // runs from its directory, so its executable's absolute path is the
+    // current directory's).
+    GetFullPathNameA(originalElfPath, MAX_PATH_LENGTH, gamePath, NULL);
     SymbolResolver::GetInstance().InitSearchPaths(libraryPath, gamePath);
 
     // Install Exception Handler (BEFORE any C++ code runs)
@@ -125,6 +203,7 @@ int main(int argc, char *argv[], char *envp[])
 
     log_info("Loading ELF file: %s\n", elfPath);
     ElfLoader loader;
+    g_ElfMain = &loader;
 
     if (!loader.Load(elfPath))
     {
@@ -159,6 +238,12 @@ int main(int argc, char *argv[], char *envp[])
     log_debug("Initializing main...");
     initMain(configPath, controlsPath);
 
+    // Raw Thrills main threads want the room the Linux launcher gives them
+    // (64 MB, see rawthrills/rtLaunch.c): the 8 MB default is not enough
+    // for all of them.
+    if (rtCurrentGame())
+        ElfLoader::SetMainStackSize(64u << 20);
+
     int final_argc = 0;
     char *final_argv_arr[10];
 
@@ -183,6 +268,13 @@ int main(int argc, char *argv[], char *envp[])
 
     log_info("ELF Execution Finished");
     return 0;
+}
+
+// The game's GL library (opengl32.dll, or its stand-in), for the code that
+// resolves the GL entry points as the games get them (rawthrills/rtFrame.c).
+extern "C" HMODULE rtGlDll(void)
+{
+    return hGlDLL;
 }
 
 #endif
