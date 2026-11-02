@@ -106,6 +106,7 @@ class ElfLoader
     // the main executable always becomes module 1, a shared object gets
     // the next index when it has a PT_TLS segment.
     void RegisterTlsSegment();
+    void PatchStackGuardReads();
 
     // Base address where the ELF is loaded
     void *m_BaseAddress = nullptr;
