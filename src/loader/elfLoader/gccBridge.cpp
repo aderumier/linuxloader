@@ -41,6 +41,7 @@ namespace GccBridge
         MAP("__strtod_l", bridge__strtod_l);
         MAP("__strtof_internal", bridge__strtof_internal);
         MAP("__strtoll_internal", __strtoll_internal);
+        MAP("__strtold_internal", bridge__strtold_internal);
 
         MAP("__assert_fail", __assert_fail);
         MAP("__errno_location", __errno_location);
@@ -125,6 +126,12 @@ namespace GccBridge
         long long __strtoll_internal(const char *n, char **e, int b, int g)
         {
             return strtoll(n, e, b);
+        }
+
+        // i386 Linux and MinGW share the 80-bit x87 long double.
+        long double bridge__strtold_internal(const char *n, char **e, int g)
+        {
+            return strtold(n, e);
         }
 
         const unsigned short **__ctype_b_loc(void)

@@ -41,6 +41,7 @@ extern "C"
     unsigned long bridge__strtoul_l(const char *n, char **e, int b, _locale_t loc);
     double bridge__strtod_l(const char *n, char **e, _locale_t loc);
     float bridge__strtof_internal(const char *n, char **e, int g);
+    long double bridge__strtold_internal(const char *n, char **e, int g);
     long long __strtoll_internal(const char *n, char **e, int b, int g);
 
     const unsigned short **__ctype_b_loc(void);
