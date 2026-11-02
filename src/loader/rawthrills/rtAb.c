@@ -26,7 +26,9 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "rawthrills.h"
 #include "rtGame.h"
@@ -59,7 +61,7 @@ static int touchOpen(void)
 // A read of the frame: the shots since the last one, as touch downs.
 static int touchRead(void)
 {
-    usleep(2000);
+    rtSleepMs(2);
     while (atomic_load(&queueTail) != atomic_load(&queueHead))
     {
         unsigned int i = atomic_load(&queueTail) % QUEUE_SIZE;

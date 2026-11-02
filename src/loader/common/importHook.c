@@ -1,8 +1,5 @@
 // Hooks on the game executable's own imports (see importHook.h).
 
-#include <dlfcn.h>
-#include <elf.h>
-#include <link.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -10,6 +7,35 @@
 #include "importHook.h"
 #include "../log/log.h"
 
+#ifdef _WIN32
+// The loader records the game's import slots as it relocates them (see
+// elfLoader/symbolResolver.cpp): patching a slot is the PLT rewrite, with
+// the game's own memory standing in for its GOT. A name the executable does
+// not import goes to the resolver (its libraries' imports do).
+
+#include "elfImports.h"
+
+void *bridgeHookImport(const char *symbolName, void *replacement);
+
+void *hookExecutableImport(const char *name, void *replacement)
+{
+    const char *names[1024];
+    uint32_t *slots[1024];
+    int n = loaderImportSlots(names, slots, 1024);
+
+    for (int i = 0; i < n; i++)
+        if (strcmp(names[i], name) == 0)
+        {
+            void *original = *(void **)slots[i];
+            *(void **)slots[i] = replacement;
+            return original;
+        }
+    return bridgeHookImport(name, replacement);
+}
+#else
+#include <dlfcn.h>
+#include <elf.h>
+#include <link.h>
 static void *hookImport(struct link_map *exe, const char *name, void *replacement, int writable);
 
 void *hookExecutableImport(const char *name, void *replacement)
@@ -253,6 +279,7 @@ void alignExecutableImports(void)
     }
     log_info("alignExecutableImports: %u imports through stack-aligning stubs", (unsigned)done);
 }
+#endif
 
 static void (*dlopenObservers[4])(const char *, void *);
 

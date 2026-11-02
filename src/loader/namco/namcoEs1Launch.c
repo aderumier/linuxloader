@@ -11,15 +11,26 @@
 // game gets Mesa's zink, OpenGL on the same GPU through its Vulkan driver,
 // unless the environment already picks an OpenGL vendor.
 
-#include <elf.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !defined(_WIN32)
+#include <elf.h>
 #include <unistd.h>
+#endif
 
 #include "namcoEs1Game.h"
 #include "../log/log.h"
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#ifndef X_OK
+#define X_OK 1
+#endif
 
 static const char *const hostLinkers[] = {
     "/lib/ld-linux.so.2",
@@ -30,6 +41,7 @@ static const char *const hostLinkers[] = {
 };
 
 // The ELF's PT_INTERP, or "" if it has none.
+#ifndef _WIN32
 static void elfInterpreter(const char *path, char *interp, size_t size)
 {
     FILE *f = fopen(path, "rb");
@@ -58,6 +70,7 @@ static void elfInterpreter(const char *path, char *interp, size_t size)
     }
     fclose(f);
 }
+#endif
 
 void namcoEs1PrepareCommand(char *command, size_t size, uint32_t fileCrc32)
 {
@@ -68,6 +81,7 @@ void namcoEs1PrepareCommand(char *command, size_t size, uint32_t fileCrc32)
     if (!g)
         return;
 
+#ifndef _WIN32
     if (g->mesaOnNvidia && access("/proc/driver/nvidia/version", F_OK) == 0 && !getenv("__GLX_VENDOR_LIBRARY_NAME"))
     {
         setenv("__GLX_VENDOR_LIBRARY_NAME", "mesa", 1);
@@ -75,17 +89,24 @@ void namcoEs1PrepareCommand(char *command, size_t size, uint32_t fileCrc32)
         setenv("LIBGL_KOPPER_DRI2", "1", 1);
         log_info("Namco: NVIDIA driver: OpenGL through Mesa's zink");
     }
+#endif
 
     snprintf(elfPath, sizeof(elfPath), "%s", command);
     if ((space = strrchr(command, ' ')) && strcmp(space, " -t") == 0)
         elfPath[space - command] = '\0';
-    // The cabinet's command line (its boot scripts pick it).
+    // The cabinet's command line (its boot scripts pick it): on Linux the
+    // launcher execs the command, on Windows the game runs in the loader's
+    // process and mainW.cpp splits the path at its first space.
     if (g->arguments)
     {
         snprintf(copy, sizeof(copy), "%s %s%s", elfPath, g->arguments, command + strlen(elfPath));
         if (strlen(copy) < size)
             strcpy(command, copy);
     }
+#ifdef _WIN32
+    return;
+#endif
+
     elfInterpreter(elfPath, interp, sizeof(interp));
     if (interp[0] == '\0' || access(interp, X_OK) == 0)
         return;
