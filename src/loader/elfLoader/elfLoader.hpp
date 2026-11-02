@@ -96,6 +96,8 @@ class ElfLoader
     bool ParseElf(const std::string &path);
     bool MapSegmentsToMemory();
     bool LoadDependencies();
+    void LoadImageDependencies();
+    void ProcessImageRelocations();
     bool ResolveVTables();
     bool ExportSymbols();
 
