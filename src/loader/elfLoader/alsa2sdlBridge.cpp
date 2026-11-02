@@ -58,6 +58,15 @@ namespace Alsa2SdlBridge
         MAP("snd_pcm_nonblock", shared_snd_pcm_nonblock);
         MAP("snd_pcm_recover", shared_snd_pcm_recover);
 
+        // FMOD's ALSA output (the Raw Thrills g5 games).
+        MAP("snd_asoundlib_version", shared_snd_asoundlib_version);
+        MAP("snd_device_name_hint", shared_snd_device_name_hint);
+        MAP("snd_device_name_get_hint", shared_snd_device_name_get_hint);
+        MAP("snd_device_name_free_hint", shared_snd_device_name_free_hint);
+        MAP("snd_pcm_hw_params_set_rate", shared_snd_pcm_hw_params_set_rate);
+        MAP("snd_pcm_hw_params_test_rate", shared_snd_pcm_hw_params_test_rate);
+        MAP("snd_pcm_readi", shared_snd_pcm_readi);
+
         // PulseAudio, routed to the same SDL audio stream.
         MAP("pa_channel_map_init_auto", shared_pa_channel_map_init_auto);
         MAP("pa_mainloop_new", shared_pa_mainloop_new);
