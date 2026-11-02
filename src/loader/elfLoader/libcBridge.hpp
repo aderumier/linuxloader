@@ -49,6 +49,7 @@ namespace LibcBridge
 {
     void initBridges();
     int bridgeSetjmp(int *env);
+    void bridgeLongjmp(int *env, int val);
 
     // STDIO interceptions
     int bridgePrintf(const char *format, ...);
@@ -128,6 +129,29 @@ namespace LibcBridge
 
     int bridgeSysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
     int bridgeStubSuccess();
+    int bridgeSetrlimit(int resource, const void *rlim);
+    void bridgeSrandTraced(unsigned int seed);
+    struct passwd;
+    struct passwd *bridgeGetpwuid(unsigned int uid);
+    struct passwd *bridgeGetpwnam(const char *name);
+    struct group;
+    struct group *bridgeGetgrnam(const char *name);
+    struct group *bridgeGetgrgid(unsigned int gid);
+    void bridgeEndpwent(void);
+    void bridgeEndgrent(void);
+    int bridgeGeteuid(void);
+    int bridgeUname(void *name);
+    int bridgeExecl(const char *path, const char *arg, ...);
+    int bridgeExecvp(const char *file, const char *const *argv);
+    int bridgeChown(const char *path, unsigned int uid, unsigned int gid);
+    int bridgeDup2(int oldfd, int newfd);
+    int bridgeSymlink(const char *target, const char *linkpath);
+    int bridgeMkfifo(const char *path, int mode);
+    int bridgeSnprintfChk(char *s, size_t n, int flag, size_t destlen, const char *format, ...);
+    int bridgeFprintfChk(FILE *stream, int flag, const char *format, ...);
+    void *bridgeMemcpyChk(void *dest, const void *src, size_t n, size_t destsz);
+    void bridgeLongjmpChk(void *env, int val);
+    void bridgeStackChkFail(void);
 
     int bridgeSyslog(int priority, const char *format, ...);
     void bridgeOpenlog(const char *ident, int option, int facility);

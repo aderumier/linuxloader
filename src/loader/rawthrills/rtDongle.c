@@ -2,6 +2,9 @@
 // Dongle* layer runs unchanged on top of it.
 
 #include <limits.h>
+#ifndef PATH_MAX
+#define PATH_MAX 260
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

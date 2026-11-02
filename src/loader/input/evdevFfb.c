@@ -183,3 +183,41 @@ void evdevFfbDamper(float strength)
         condition(&damperEffect, level);
 }
 #endif
+
+#ifndef __linux__
+// No evdev on Windows: the wheel force has nowhere to go yet (a DirectInput
+// or XInput rumble would be the port). The games' calls are no-ops.
+
+int evdevFfbOpen(const char *who)
+{
+    (void)who;
+    return -1;
+}
+
+int evdevFfbOpenPath(const char *who, const char *path)
+{
+    (void)who;
+    (void)path;
+    return -1;
+}
+
+int evdevFfbWheel(void)
+{
+    return 0;
+}
+
+void evdevFfbConstant(float force)
+{
+    (void)force;
+}
+
+void evdevFfbSpring(float strength)
+{
+    (void)strength;
+}
+
+void evdevFfbDamper(float strength)
+{
+    (void)strength;
+}
+#endif

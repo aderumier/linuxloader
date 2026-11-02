@@ -17,7 +17,9 @@
 //   nsAdrv_mixsts(channel): the hardware mixer's status (0: none here, the
 //         game's volumes stay its own).
 
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
@@ -28,7 +30,8 @@
 #include "../log/log.h"
 
 // The game links SDL 1.2, whose SDL_* names shadow SDL3's in the global
-// scope: SDL3 is called through its own library handle.
+// scope: SDL3 is called through its own library handle (linked in directly
+// on Windows).
 static struct
 {
     SDL_InitFlags (*WasInit)(SDL_InitFlags);
@@ -44,6 +47,20 @@ static struct
 
 static int loadSdl3(void)
 {
+#ifdef _WIN32
+    if (sdl3.Delay)
+        return 0;
+    sdl3.WasInit = SDL_WasInit;
+    sdl3.InitSubSystem = SDL_InitSubSystem;
+    sdl3.GetError = SDL_GetError;
+    sdl3.OpenAudioDeviceStream = SDL_OpenAudioDeviceStream;
+    sdl3.ResumeAudioStreamDevice = SDL_ResumeAudioStreamDevice;
+    sdl3.DestroyAudioStream = SDL_DestroyAudioStream;
+    sdl3.GetAudioStreamQueued = SDL_GetAudioStreamQueued;
+    sdl3.PutAudioStreamData = SDL_PutAudioStreamData;
+    sdl3.Delay = SDL_Delay;
+    return 0;
+#else
     void *h;
     if (sdl3.Delay)
         return 0;
@@ -64,6 +81,7 @@ static int loadSdl3(void)
     LOAD(Delay);
 #undef LOAD
     return sdl3.WasInit && sdl3.InitSubSystem && sdl3.OpenAudioDeviceStream && sdl3.Delay ? 0 : -1;
+#endif
 }
 
 // Frames kept queued: the device is "ready" (nsAdrv_wait) while fewer than
@@ -114,8 +132,12 @@ static int adrvWait(int timeout)
     if (!stream)
     {
         // no device: the game's pace, a period at a time
+#ifdef _WIN32
+        SDL_Delay((Uint32)(period * 1000 / (rate > 0 ? rate : 48000)));
+#else
         struct timespec t = {0, period * 1000000000L / (rate > 0 ? rate : 48000)};
         nanosleep(&t, NULL);
+#endif
         return HIGH;
     }
     for (;;)

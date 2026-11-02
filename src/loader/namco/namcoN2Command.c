@@ -10,7 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+
+#if !defined(_WIN32)
 #include <sys/statvfs.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <direct.h>
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#endif
 
 #include "namcoN2.h"
 #include "namcoEs1.h"
@@ -20,6 +30,27 @@ static int startsWith(const char *s, const char *prefix)
 {
     return strncmp(s, prefix, strlen(prefix)) == 0;
 }
+
+static int mkdirOne(const char *path)
+{
+#ifdef _WIN32
+    return _mkdir(path);
+#else
+    return mkdir(path, 0755);
+#endif
+}
+
+// MinGW's readdir does not fill d_type: the entry's file type, stat'ed.
+#ifdef _WIN32
+static int isRegularFile(const char *dir, const char *name)
+{
+    char path[PATH_MAX];
+    struct stat st;
+
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+#endif
 
 // A cabinet path (/tmp/... or relative) in the game directory.
 static const char *local(const char *path, char *buf, size_t size)
@@ -35,10 +66,10 @@ static void makeDirs(const char *path)
         if (*p == '/')
         {
             *p = '\0';
-            mkdir(buf, 0755);
+            mkdirOne(buf);
             *p = '/';
         }
-    mkdir(buf, 0755);
+    mkdirOne(buf);
 }
 
 static int copyFile(const char *from, const char *to)
@@ -97,13 +128,23 @@ static int findFiles(const char *command)
         int count = 0;
         DIR *dir = opendir(local(finds[i].directory, dirBuf, sizeof(dirBuf)));
         struct dirent *e;
+#ifdef _WIN32
+        while (dir && (e = readdir(dir)) && count < 4096)
+            if (isRegularFile(dirBuf, e->d_name) && endsWith(e->d_name, finds[i].extension))
+                names[count++] = strdup(e->d_name);
+#else
         while (dir && (e = readdir(dir)) && count < 4096)
             if (e->d_type == DT_REG && endsWith(e->d_name, finds[i].extension))
                 names[count++] = strdup(e->d_name);
+#endif
         if (dir)
             closedir(dir);
         qsort(names, count, sizeof(names[0]), compareNames);
+#ifdef _WIN32
+        FILE *out = fopen(local("/tmp/find.txt", outBuf, sizeof(outBuf)), "wb");
+#else
         FILE *out = fopen(local("/tmp/find.txt", outBuf, sizeof(outBuf)), "w");
+#endif
         for (int j = 0; j < count; j++)
         {
             if (out)
@@ -127,8 +168,13 @@ static int copyTargets(void)
     struct dirent *e;
 
     makeDirs(target);
+#ifdef _WIN32
+    while (dir && (e = readdir(dir)))
+        if (isRegularFile("data/target", e->d_name) && endsWith(e->d_name, ".target.gz"))
+#else
     while (dir && (e = readdir(dir)))
         if (e->d_type == DT_REG && endsWith(e->d_name, ".target.gz"))
+#endif
         {
             snprintf(from, sizeof(from), "data/target/%s", e->d_name);
             snprintf(to, sizeof(to), "%s/%s", target, e->d_name);
@@ -173,19 +219,31 @@ static FILE *redirected(const char *command)
         return NULL;
     memcpy(path, r, n);
     path[n] = '\0';
+#ifdef _WIN32
+    return fopen(local(path, buf, sizeof(buf)), "wb");
+#else
     return fopen(local(path, buf, sizeof(buf)), "w");
+#endif
 }
 
 // "sudo perl etc/usbsize.pl > file": the work disk's size in 1K blocks (the
 // second column of busybox df), the game directory's volume.
 static int workDiskSize(const char *command)
 {
-    struct statvfs fs;
     unsigned long long kb = 0;
     FILE *out = redirected(command);
 
+#ifdef _WIN32
+    {
+        LARGE_INTEGER total, free;
+        if (GetDiskFreeSpaceExA(NULL, &total, &free, NULL))
+            kb = (unsigned long long)total.QuadPart / 1024;
+    }
+#else
+    struct statvfs fs;
     if (statvfs(".", &fs) == 0)
         kb = (unsigned long long)fs.f_blocks * fs.f_frsize / 1024;
+#endif
     if (!out)
         return 1;
     fprintf(out, "%llu\n", kb);

@@ -1,20 +1,35 @@
 // Namco System N2 games (see namcoN2.h): the game's start, its /tmp, and the
 // hooks the Wangan titles need (the Pacloader fork's n2Wmmt3.cpp).
 
-#include <dlfcn.h>
 #include <limits.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 #include <locale.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/mman.h>
 #include <unistd.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <direct.h>
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+// MinGW's CRT has no glibc's setenv.
+#define setenv(name, value, overwrite) _putenv_s(name, value)
+#endif
 
 #include "namcoN2.h"
+#include "../common/importHook.h"
 #include "../config/config.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../log/log.h"
@@ -30,9 +45,14 @@ const char *csneoRedirectPath(const char *path, char *buf, size_t size);
 int namcoN2Openat(int dirfd, const char *path, int flags, char *buf, size_t size)
 {
     return isNamcoN2Game() && namcoN2CurrentGame()->crc32 == CSNEO_N2
-               ? csneoOpenatRemap(dirfd, path, flags, buf, size)
-               : 0;
+                ? csneoOpenatRemap(dirfd, path, flags, buf, size)
+                : 0;
 }
+
+#ifdef _WIN32
+static int (*realSetSockopt)(int, int, int, const void *, int);
+int namcoN2SetSockopt(int, int, int, const void *, int);
+#endif
 
 extern uint32_t gId;
 
@@ -162,6 +182,16 @@ static int systemIsError(void *self)
     return r;
 }
 
+static int makeCodeWritable(uintptr_t page, uintptr_t end)
+{
+#ifdef _WIN32
+    DWORD old;
+    return VirtualProtect((void *)page, end - page, PAGE_EXECUTE_READWRITE, &old) != 0;
+#else
+    return mprotect((void *)page, end - page, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+#endif
+}
+
 // The link search: 1 s instead of 300 (the movl's immediate, if it is the
 // expected instruction).
 static void shortLinkSearch(uint32_t address)
@@ -172,7 +202,7 @@ static void shortLinkSearch(uint32_t address)
     if (!address)
         return;
     if (mov[0] != 0xc7 || *(uint32_t *)(mov + 3) != 18000 ||
-        mprotect((void *)page, 0x2000, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+        !makeCodeWritable(page, page + 0x2000))
     {
         log_error("Namco N2: unexpected code at %#x, the link search not shortened", address);
         return;
@@ -190,10 +220,23 @@ int namcoN2Init(void)
     setenv("LC_ALL", "C", 1);
     setlocale(LC_ALL, "C");
 
+#ifdef _WIN32
+    if (!GetCurrentDirectoryA(sizeof(gameDir), gameDir))
+        gameDir[0] = '\0';
+    snprintf(tmp, sizeof(tmp), "%s\\tmp", gameDir);
+    _mkdir(tmp);
+#else
     if (!getcwd(gameDir, sizeof(gameDir)))
         gameDir[0] = '\0';
     snprintf(tmp, sizeof(tmp), "%s/tmp", gameDir);
     mkdir(tmp, 0755);
+#endif
+
+#ifdef _WIN32
+    // The Linux setsockopt interposer (below) as a hook on the game's own
+    // import (see common/importHook.h).
+    realSetSockopt = (int (*)(int, int, int, const void *, int))hookExecutableImport("setsockopt", namcoN2SetSockopt);
+#endif
 
     // Counter Strike NEO is a GoldSrc HLDS, not a Namco clSystemN2 app: the
     // Wangan hooks (clSystemN2, adm*, gRomInfo, Alchemy) do not exist, so it
@@ -232,6 +275,7 @@ int namcoN2Init(void)
     return 0;
 }
 
+#ifndef _WIN32
 // A single cabinet. The game finds the other cabinets of its link through
 // multicast (225.0.0.1), where it also hears itself wherever the host loops
 // multicast back to its sender (Batocera's wired eth0): it then links with
@@ -253,3 +297,49 @@ int setsockopt(int fd, int level, int name, const void *value, socklen_t length)
     }
     return r;
 }
+#else
+// The Linux IP-level option names (include/linux/in.h) and the Windows'
+// (winsock2.h): they differ, and the game passes the Linux ones.
+static int winIpOption(int name)
+{
+    switch (name)
+    {
+    case 0:
+        return 0x15; // IP_OPTIONS
+    case 1:
+        return 0x03; // IP_TOS
+    case 2:
+        return 0x02; // IP_TTL
+    case 3:
+        return 0x14; // IP_MULTICAST_IF
+    case 4:
+        return 0x13; // IP_MULTICAST_TTL
+    case 5:
+        return 0x11; // IP_MULTICAST_LOOP
+    case 6:
+        return 0x10; // IP_ADD_MEMBERSHIP
+    case 7:
+        return 0x12; // IP_DROP_MEMBERSHIP
+    case 8:
+        return 0x06; // IP_HDRINCL
+    }
+    return name;
+}
+
+// A single cabinet: as the Linux interposer (above), the multicast sockets
+// get no loopback, so the game only ever finds itself alone.
+int namcoN2SetSockopt(int fd, int level, int name, const void *value, int length)
+{
+    if (level == IPPROTO_IP)
+        name = winIpOption(name);
+    int r = realSetSockopt ? realSetSockopt(fd, level, name, value, length) : -1;
+    if (r == 0 && level == IPPROTO_IP && name == IP_ADD_MEMBERSHIP)
+    {
+        unsigned char off = 0;
+        realSetSockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &off, sizeof(off));
+        if (getenv("NAMCO_N2_TRACE"))
+            fprintf(stderr, "Namco N2: multicast socket %d without loopback\n", fd);
+    }
+    return r;
+}
+#endif

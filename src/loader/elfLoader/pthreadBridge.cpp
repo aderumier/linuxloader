@@ -10,6 +10,11 @@
 namespace PthreadBridge
 {
 
+    int bridgePthreadSetCancelType(int mode, int *oldtype);
+    int bridgePthreadTimedJoinNp(void *thread, void **thread_return, const void *abstime);
+    void bridgePthreadKeyCreate(void *key, void (*destructor)(void *));
+    int bridgePthreadMutexAttrSetPshared(void *attr, int pshared);
+
     extern "C"
     {
         int emuSemInit(void *sem, int pshared, unsigned int value);
@@ -162,8 +167,46 @@ namespace PthreadBridge
 
         MAP("pthread_once", bridgePthreadOnce);
 
+        // Cancellation and non-portable extras: no cancellation on Windows,
+        // timed join reports "not joined" so callers take their timeout path.
+        MAP("pthread_setcanceltype", bridgePthreadSetCancelType);
+        MAP("pthread_setcancelstate", bridgePthreadSetCancelType);
+        MAP("pthread_timedjoin_np", bridgePthreadTimedJoinNp);
+        MAP("__pthread_key_create", bridgePthreadKeyCreate);
+        MAP("pthread_mutexattr_setpshared", bridgePthreadMutexAttrSetPshared);
+
         MAP("sched_get_priority_max", bridgeSchedGetPriorityMax);
         MAP("sched_get_priority_min", bridgeSchedGetPriorityMin);
+    }
+
+    // Both pthread_setcancelstate and pthread_setcanceltype are
+    // (int mode, int *oldmode): the mode is an integer, not a pointer.
+    int bridgePthreadSetCancelType(int mode, int *oldtype)
+    {
+        (void)mode;
+        if (oldtype)
+            *oldtype = 0; // PTHREAD_CANCEL_DEFERRED
+        return 0;
+    }
+
+    int bridgePthreadTimedJoinNp(void *thread, void **thread_return, const void *abstime)
+    {
+        (void)thread;
+        (void)thread_return;
+        (void)abstime;
+        return -1; // behave like ETIMEDOUT: non-blocking, caller retries
+    }
+
+    void bridgePthreadKeyCreate(void *key, void (*destructor)(void *))
+    {
+        PthreadEmu::pthreadKeyCreate(key, destructor);
+    }
+
+    int bridgePthreadMutexAttrSetPshared(void *attr, int pshared)
+    {
+        (void)attr;
+        (void)pshared;
+        return 0;
     }
 
     int bridgePthreadOnce(int *once_control, void (*init_routine)(void))

@@ -19,6 +19,21 @@
 #include "../log/log.h"
 #include "../common/desktopInput.h"
 
+#ifdef _WIN32
+// MinGW's CRT has no strndup.
+static char *strndupCompat(const char *s, size_t n)
+{
+    char *out = (char *)malloc(n + 1);
+    if (out)
+    {
+        memcpy(out, s, n);
+        out[n] = '\0';
+    }
+    return out;
+}
+#define strndup strndupCompat
+#endif
+
 #pragma pack(push, 1)
 typedef struct
 {

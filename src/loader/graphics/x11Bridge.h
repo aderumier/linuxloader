@@ -2,6 +2,9 @@
 
 #include <stdbool.h>
 #include "x11types.h"
+#ifdef _WIN32
+#include "glxBridge.h" // XVisualInfo
+#endif
 
 struct SDL_Window;
 
@@ -117,6 +120,93 @@ extern "C" {
     int bridgeXReply(Display *dpy, int *rep, int size, int expect_reply);
 
     XWMHints *bridgeXAllocWMHints();
+
+    // --- g6 (Angry Birds / The Walking Dead) + Pac-Man's fuller X11 client ---
+    int bridgeXDefaultScreen(Display *dpy);
+    char *bridgeXDisplayName(Display *dpy);
+    int bridgeXQueryExtension(Display *dpy, const char *name, int *evenbase, int *errbase);
+    int bridgeXMissingExtension(Display *dpy, int *evenbase, int *errbase);
+    int bridgeXEventsQueued(Display *dpy, int mode);
+    int bridgeXPeekEvent(Display *dpy, XEvent *event_return);
+    int bridgeXMaskEvent(Display *dpy, long event_mask, int event_type);
+    Window bridgeXCreateSimpleWindow(Display *dpy, Window parent, int x, int y, unsigned int width, unsigned int height,
+                                     unsigned int border_width, unsigned long border_pixel, unsigned long background_pixel);
+    int bridgeXRaiseWindow(Display *dpy, Window w);
+    int bridgeXIconifyWindow(Display *dpy, Window w, int level);
+    int bridgeXMoveResizeWindow(Display *dpy, Window w, int x, int y, unsigned int width, unsigned int height);
+    int bridgeXReparentWindow(Display *dpy, Window w, Window parent, int x, int y);
+    int bridgeXClearWindow(Display *dpy, Window w);
+    int bridgeXInstallColormap(Display *dpy, Colormap colormap);
+    int bridgeXSetWindowBackground(Display *dpy, Window w, unsigned long pixel);
+    int bridgeXSetWindowBackgroundPixmap(Display *dpy, Window w, Pixmap pixmap);
+    int bridgeXSetWindowColormap(Display *dpy, Window w, Colormap colormap);
+    int bridgeXResetScreenSaver(Display *dpy);
+    int bridgeXChangePointerControl(Display *dpy, int mouse_gain, int mouse_speed, int min_denom, int max_denom, int threshold);
+    int bridgeXGetPointerControl(Display *dpy, int *accel_numerator_ret, int *accel_denominator_ret, int *threshold_ret);
+    XVisualInfo *bridgeXGetVisualInfo(Display *dpy, long valuemask, XVisualInfo *vistr, int *nitems);
+    int bridgeXMatchVisualInfo(Display *dpy, int depth, int class_type, XVisualInfo *vistr);
+    VisualID bridgeXVisualIDFromVisual(Visual *visual);
+    unsigned long bridgeXCreateGC(Display *dpy, Drawable d, unsigned long valuemask, void *values);
+    int bridgeXFreeGC(Display *dpy, unsigned long gc);
+    Pixmap bridgeXCreatePixmap(Display *dpy, Drawable d, unsigned int width, unsigned int height, unsigned int depth);
+    void *bridgeXCreateImage(Display *dpy, Visual *visual, unsigned int depth, int format, char *data, unsigned int width, unsigned int height);
+    int bridgeXPutImage(Display *dpy, unsigned long gc, Pixmap src, void *image, int sx, int sy, int dx, int dy, unsigned int width, unsigned int height);
+    int bridgeXListPixmapFormats(Display *dpy, int *nformats_return);
+    int bridgeXShmQueryExtension(Display *dpy);
+    int bridgeXShmAttach(Display *dpy, void *shmseg);
+    int bridgeXShmDetach(Display *dpy, void *shmseg);
+    void *bridgeXShmCreateImage(Display *dpy, Visual *visual, unsigned int depth, int format, char *data, void *shmseg, unsigned int width, unsigned int height);
+    int bridgeXShmPutImage(Display *dpy, unsigned long gc, Pixmap dst, void *image, int sx, int sy, int dx, int dy, unsigned int width, unsigned int height, int send_event);
+    int bridgeXKeycodeToKeysym(Display *dpy, unsigned char keycode, int index);
+    int bridgeXQueryKeymap(Display *dpy, char *key_return);
+    int bridgeXRefreshKeyboardMapping(void *event);
+    void *bridgeXGetModifierMapping(Display *dpy);
+    void bridgeXFreeModifiermap(void *modmap);
+    int bridgeXAllocColor(Display *dpy, Colormap cmap, void *color_return);
+    int bridgeXFreeColors(Display *dpy, Colormap cmap, int *list, int ncolors, int deltops);
+    int bridgeXQueryColors(Display *dpy, Colormap cmap, void *color, int ncolors);
+    int bridgeXStoreColors(Display *dpy, Colormap cmap, void *color, int ncolors);
+    void *bridgeXAllocClassHint(void);
+    void *bridgeXAllocSizeHints(void);
+    int bridgeXSetClassHint(Display *dpy, Window w, void *class_hints);
+    int bridgeXSetWMHints(Display *dpy, Window w, void *wm_hints);
+    void *bridgeXGetWMHints(Display *dpy, Window w);
+    int bridgeXSetTextProperty(Display *dpy, Window w, void *text_prop, Atom name);
+    int bridgeXDeleteProperty(Display *dpy, Window w, Atom property, Atom type, int format);
+    int bridgeXutf8TextListToTextProperty(char **list, int count, void *text_prop_return, int mode);
+    int bridgeXutf8LookupString(Display *dpy, XKeyEvent *key_event, char *buffer_return, int nbytes, int *keysym_return, int *status_return);
+    int bridgeXSetIOErrorHandler(int (*IOErrorHandler)(Display *));
+    int bridgeXGetErrorDatabaseText(Display *dpy, const char *name, const char *value, char *buffer, unsigned long nbuffer);
+    void bridgeXextAddDisplay(Display *dpy, void *xext);
+    int bridgeXextCreateExtension(Display *dpy, void *info, int extension, int event_base, int error_base);
+    void bridgeXextDestroyExtension(Display *dpy, void *info);
+    void bridgeXextRemoveDisplay(Display *dpy, void *xext);
+    void bridgeXSetExtensionErrorHandler(void *handler);
+    void bridgeXESetEventToWire(Display *dpy, void *event, void *xEvent);
+    void bridgeXESetWireToEvent(Display *dpy, void *event, void *wire);
+    int bridge_XEatData(Display *dpy, int n, int *read_all);
+    void bridge_XGetRequest(Display *dpy, int *request, void *request_ptr);
+    int bridge_XSend(Display *dpy, char *request, int extra, int async);
+    int bridge_XRead(Display *dpy, char *buf, int len);
+    int bridge_XReadPad(Display *dpy, char *buf, int len, int padlen);
+    void bridge_XSetLastRequestRead(Display *dpy);
+    int bridge_XFlushGCCache(Display *dpy);
+    void *bridgeXOpenIM(Display *dpy, char **args, int nargs);
+    int bridgeXCloseIM(void *im);
+    void *bridgeXCreateIC(void *im);
+    int bridgeXDestroyIC(void *ic);
+    int bridgeXGetICValues(void *ic);
+    int bridgeXSetICFocus(void *ic, Window w);
+    int bridgeXUnsetICFocus(void *ic);
+    Display *bridgeXDisplayOfIM(void *im);
+    int bridgeXSetLocaleModifiers(const char *mod);
+    int bridgeXFilterEvent(Display *dpy, XEvent *event, int num_vars, void *vars);
+    int bridgeXRRQueryVersion(Display *dpy, int *maj, int *min);
+    void *bridgeXRRGetScreenInfo(Display *dpy, Window w);
+    void bridgeXRRFreeScreenConfigInfo(void *info);
+    int bridgeXRRSetScreenConfig(void *dpy, void *rcs, Time t, Window root, int x, int y, unsigned int w, unsigned int h, int r, int mask);
+    void *bridgeXRRConfigCurrentConfiguration(void *dpy, int *mask_ret);
+    int bridgeXRRConfigSizes(void *dpy, int *width_ret, int *height_ret, int *widths_ret);
 #ifdef __cplusplus
 }
 #endif

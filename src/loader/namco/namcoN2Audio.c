@@ -3,8 +3,16 @@
 // 1.1 entry points, all exported by the game, are sent to the host's OpenAL
 // (OpenAL Soft), as the Pacloader fork does (n2Audio.cpp).
 
-#include <dlfcn.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "namcoN2.h"
 #include "../log/log.h"
@@ -13,6 +21,15 @@ static void *openal;
 static void *(*realOpenDevice)(const char *);
 static void *(*realCreateContext)(void *, const int *);
 static int (*realGetError)(void *);
+
+static void *openalSymbol(const char *name)
+{
+#ifdef _WIN32
+    return (void *)GetProcAddress((HMODULE)openal, name);
+#else
+    return dlsym(openal, name);
+#endif
+}
 
 // The default device, whatever the name (nForce's device names mean nothing
 // to OpenAL Soft; the game passes NULL anyway).
@@ -52,6 +69,24 @@ static const char *const forwarded[] = {
 
 void namcoN2AudioInit(void)
 {
+#ifdef _WIN32
+    // OpenAL Soft, as the loader's own stand-in (ll-deps/openal32.dll).
+    char dir[MAX_PATH], path[MAX_PATH + 32];
+    if (GetModuleFileNameA(NULL, dir, sizeof(dir)) && strchr(dir, '\\'))
+    {
+        *strrchr(dir, '\\') = '\0';
+        snprintf(path, sizeof(path), "%s\\ll-deps\\openal32.dll", dir);
+        openal = LoadLibraryA(path);
+    }
+    if (!openal)
+    {
+        log_error("Namco N2: no OpenAL library (ll-deps\\openal32.dll: %lu), the game stays silent", GetLastError());
+        return;
+    }
+    *(void **)&realOpenDevice = openalSymbol("alcOpenDevice");
+    *(void **)&realCreateContext = openalSymbol("alcCreateContext");
+    *(void **)&realGetError = openalSymbol("alcGetError");
+#else
     static const char *const libraries[] = {"libopenal.so.1", "libopenal.so.0"};
     for (size_t i = 0; i < sizeof(libraries) / sizeof(libraries[0]) && !openal; i++)
         openal = dlopen(libraries[i], RTLD_NOW | RTLD_LOCAL);
@@ -63,6 +98,7 @@ void namcoN2AudioInit(void)
     *(void **)&realOpenDevice = dlsym(openal, "alcOpenDevice");
     *(void **)&realCreateContext = dlsym(openal, "alcCreateContext");
     *(void **)&realGetError = dlsym(openal, "alcGetError");
+#endif
     if (!realOpenDevice || !realCreateContext)
     {
         log_error("Namco N2: the OpenAL library has no alcOpenDevice/alcCreateContext, the game stays silent");
@@ -72,7 +108,7 @@ void namcoN2AudioInit(void)
     int redirected = namcoN2Hook("alcOpenDevice", (void *)openDevice) + namcoN2Hook("alcCreateContext", (void *)createContext);
     for (size_t i = 0; i < sizeof(forwarded) / sizeof(forwarded[0]); i++)
     {
-        void *function = dlsym(openal, forwarded[i]);
+        void *function = openalSymbol(forwarded[i]);
         if (function)
             redirected += namcoN2Hook(forwarded[i], function);
         else

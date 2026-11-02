@@ -5,6 +5,7 @@
 #include "pthreadEmu.hpp"
 #include "pthreadInternal.hpp"
 #include "../linuxStack.hpp"
+#include "../tlsSupport.hpp"
 #include "../../log/log.h"
 #include <process.h>
 
@@ -15,6 +16,10 @@
 static DWORD s_tls_cancel_state = TLS_OUT_OF_INDEXES;
 static DWORD s_tls_cancel_type = TLS_OUT_OF_INDEXES;
 static DWORD s_tls_cancel_pending = TLS_OUT_OF_INDEXES;
+
+// Default stack for threads created without an explicit size: 0 (the CRT
+// default) until the game's own pthread_setattr_default_np reaches it.
+static size_t s_default_thread_stack_size = 0;
 
 struct ThreadCancelState
 {
@@ -70,8 +75,13 @@ __attribute__((force_align_arg_pointer)) static unsigned __stdcall ThreadEntryPo
     // Setup cancel state for this thread
     SetupCancelState();
 
+    // This thread's Linux TCB/DTV (see tlsSupport), before any game code
+    // runs on it; the game's TLS goes through __tls_get_addr.
+    Tls::EnsureThreadTls();
+
     // Call the actual thread function
     void *retval = start_routine(arg);
+    Tls::ReleaseThreadTls();
 
     // Store return value
     if (thread_info)
@@ -173,6 +183,23 @@ int PthreadEmu::pthreadAttrGetstacksize(const void *attr, size_t *stacksize)
     return 0;
 }
 
+void PthreadEmu::SetDefaultThreadStackSize(size_t size)
+{
+    s_default_thread_stack_size = size;
+}
+
+size_t PthreadEmu::GetDefaultThreadStackSize()
+{
+    return s_default_thread_stack_size;
+}
+
+// For the loader's own code (Raw Thrills), to set the default that the
+// emulated threads take when a game asks for none.
+extern "C" void rtSetDefaultThreadStackSize(size_t size)
+{
+    PthreadEmu::SetDefaultThreadStackSize(size);
+}
+
 // ============================================================
 // Thread Functions
 // ============================================================
@@ -211,6 +238,8 @@ int PthreadEmu::pthreadCreate(void *thread, const void *attr, void *(*start_rout
             detach_state = a->detach_state;
         }
     }
+    if (stack_size == 0)
+        stack_size = s_default_thread_stack_size;
 
     thread_info->detached = (detach_state == LINUX_PTHREAD_CREATE_DETACHED);
 

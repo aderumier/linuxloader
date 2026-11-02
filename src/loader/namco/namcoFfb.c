@@ -32,6 +32,15 @@
 #include "../input/evdevInput.h"
 #include "../log/log.h"
 
+#ifdef _WIN32
+// createQuietThread normally lives in input/evdevInput.c (Linux-only):
+// there are no signals to mask here.
+int createQuietThread(pthread_t *thread, void *(*start)(void *), void *arg)
+{
+    return pthread_create(thread, NULL, start, arg);
+}
+#endif
+
 #define PERIOD_NS 8000000L
 
 static const NamcoFfb *ffbGame;
