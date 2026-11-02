@@ -10,14 +10,16 @@
 
 #include "gamePath.h"
 #include "../teamplay/teamplay.h"
-#ifdef __linux__
-#include <dlfcn.h>
-#include "ossDsp.h"
+// Compiled on both hosts (see the ports): only Global VR, Cecropia, IGS and Cosmodog
+// are Linux-only.
 #include "../rawthrills/rawthrills.h"
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
-#include "../globalvr/gvr.h"
 #include "../roxor/roxor.h"
+#ifdef __linux__
+#include <dlfcn.h>
+#include "ossDsp.h"
+#include "../globalvr/gvr.h"
 #include "../cecropia/cecropia.h"
 #include "../igs/igs.h"
 #include "../cosmodog/cosmodog.h"
@@ -31,28 +33,26 @@ const char *gameRedirectPath(const char *path, char *buf, size_t size)
 {
     if (!path)
         return path;
-#ifdef __linux__
     if (isRawThrillsGame())
         return rtRedirectPath(path, buf, size);
-#endif
     if (isTeamplayGame())
         return teamplayRedirectPath(path, buf, size);
 #ifdef __linux__
     if (isGvrGame())
         return gvrRedirectPath(path, buf, size);
-    if (isRoxorGame())
-        return roxorRedirectPath(path, buf, size);
     if (isCecropiaGame())
         return cecropiaRedirectPath(path, buf, size);
     if (isIgsGame())
         return igsRedirectPath(path, buf, size);
     if (isCosmodogGame())
         return cosmodogRedirectPath(path, buf, size);
+#endif
+    if (isRoxorGame())
+        return roxorRedirectPath(path, buf, size);
     if (isNamcoEs1Game())
         return namcoEs1RedirectPath(path, buf, size);
     if (isNamcoN2Game())
         return namcoN2RedirectPath(path, buf, size);
-#endif
     return path;
 }
 

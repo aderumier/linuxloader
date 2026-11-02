@@ -1,17 +1,34 @@
 // Video mode and frame hook for Raw Thrills games (kept apart from rawthrills.c, whose GL
 // shader wrapper conflicts with glad's gl.h macros).
 
-#include <dlfcn.h>
-#include <elf.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <glad/gl.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#ifndef PATH_MAX
+#define PATH_MAX 260
+#endif
+void *bridgeGetLoadedLibrary(const char *dllName);
+int rtMainCodeSegment(uint32_t address, uint32_t *start, uint32_t *end);
+HMODULE rtGlDll(void);
+void bridgeGlutSwapBuffers(void);
+int bridgeGlutGet(int type);
+void bridgeGlutFullScreen(void);
+int bridgeGlutCreateWindow(const char *title);
+void bridgeGlutInitWindowSize(int width, int height);
+void bridgeGlutReshapeFunc(void (*callback)(int, int));
+#else
+#include <dlfcn.h>
+#include <elf.h>
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <glad/gl.h>
+#endif
 
 #include "rawthrills.h"
 #include "../config/config.h"
@@ -24,6 +41,16 @@
 #include "../graphics/frameScale.h"
 #include "../log/log.h"
 
+// Whether a file is there and readable.
+static int bezelCanRead(const char *path)
+{
+#ifdef _WIN32
+    return _access(path, 0) == 0;
+#else
+    return access(path, R_OK) == 0;
+#endif
+}
+
 // Frame hooks: the games present frames with SDL 1.2's SDL_GL_SwapBuffers,
 // or glut's glutSwapBuffers (g3 engine). There the frame is scaled to the
 // window once the window no longer matches the game's size (see
@@ -31,6 +58,63 @@
 // as the loader does in its GLX swap hook for Lindbergh games. Under the
 // border goes the bezel, if any ([Display] BEZEL, see bezel.h).
 
+#ifdef _WIN32
+// The GL entry points as the games get them: the real ones, with no loader
+// window in between (see rtDump.c): the extensions' (wglGetProcAddress's),
+// the core's (the GL library's own).
+void *rtRealGlProc(const char *name)
+{
+    // wglGetProcAddress is WINAPI (stdcall): match its prototype, or the
+    // single argument's four bytes are left on the stack.
+    static void *WINAPI (*wglGetProc)(const char *);
+    if (!wglGetProc)
+        wglGetProc = (void *WINAPI (*)(const char *))GetProcAddress(rtGlDll(), "wglGetProcAddress");
+    void *p = wglGetProc ? (void *)wglGetProc(name) : NULL;
+    if (!p)
+        p = (void *)GetProcAddress(rtGlDll(), name);
+    return p;
+}
+
+// The window being drawn: the game's SDL 1.2's, whose client area the window
+// manager resizes. The game's idea of its size (SDL_GetVideoSurface) is
+// passed to frameBegin anyway, for when the window's cannot be had.
+static int drawableArea(int *width, int *height, int area[4])
+{
+    static int (*getWMInfo)(void *, void *);
+    static int inited;
+    // SDL_SysWMinfo: an SDL_version (3 bytes) and the window's handle.
+    struct
+    {
+        unsigned char major, minor, patch;
+        char pad;
+        HWND window;
+    } info;
+
+    if (!inited)
+    {
+        inited = 1;
+        HMODULE hSdl = (HMODULE)bridgeGetLoadedLibrary("SDL.dll");
+        if (hSdl)
+            getWMInfo = (int (*)(void *, void *))GetProcAddress(hSdl, "SDL_GetWMInfo");
+    }
+    if (!getWMInfo)
+        return 0;
+    info.major = 1;
+    info.minor = 2;
+    info.patch = 0;
+    if (getWMInfo(&info, &info) != 1 || !info.window)
+        return 0;
+    RECT rect;
+    if (!GetClientRect(info.window, &rect))
+        return 0;
+    *width = rect.right - rect.left;
+    *height = rect.bottom - rect.top;
+    area[0] = area[1] = 0;
+    area[2] = *width;
+    area[3] = *height;
+    return 1;
+}
+#else
 // The window being drawn: the games' own idea of its size (SDL 1.2's video
 // surface, glut's) does not follow the window manager's resizes. An older
 // SDL 2 (The Walking Dead) draws in a child of its window, which keeps its
@@ -162,6 +246,7 @@ static int drawableArea(int *width, int *height, int area[4])
     area[3] = y1 - y0;
     return 1;
 }
+#endif
 
 // Before the swap; width and height are the game's idea of the window size,
 // used if the drawable's cannot be had. The frame is kept clean around the
@@ -179,7 +264,12 @@ static void frameBegin(int width, int height)
     // The GL entry points are loaded once a context is current.
     if (!glLoaded)
     {
-        GLADloadfunc getProcAddress = (GLADloadfunc)dlsym(RTLD_DEFAULT, "glXGetProcAddressARB");
+        GLADloadfunc getProcAddress;
+#ifdef _WIN32
+        getProcAddress = (GLADloadfunc)rtRealGlProc;
+#else
+        getProcAddress = (GLADloadfunc)dlsym(RTLD_DEFAULT, "glXGetProcAddressARB");
+#endif
         glLoaded = getProcAddress && gladLoadGL(getProcAddress) ? 1 : -1;
         if (glLoaded < 0)
             log_warn("Raw Thrills: cannot load GL entry points, no border or window scaling");
@@ -206,6 +296,31 @@ static void frameEnd(void)
     bordered = 0;
 }
 
+#ifdef _WIN32
+// The game's SDL_GL_SwapBuffers import (see rtDump.c): the frame hook
+// around the real swap, from the game's own SDL.
+void rtSdlSwapBuffers(void)
+{
+    static void (*real)(void);
+    static void *(*getVideoSurface)(void);
+
+    if (!real)
+    {
+        HMODULE hSdl = (HMODULE)bridgeGetLoadedLibrary("SDL.dll");
+        if (hSdl)
+        {
+            real = (void (*)(void))GetProcAddress(hSdl, "SDL_GL_SwapBuffers");
+            getVideoSurface = (void *( *)(void))GetProcAddress(hSdl, "SDL_GetVideoSurface");
+        }
+    }
+    // SDL 1.2 SDL_Surface: flags, format, w, h.
+    int *surface = getVideoSurface ? getVideoSurface() : NULL;
+    frameBegin(surface ? surface[2] : 0, surface ? surface[3] : 0);
+    if (real)
+        real();
+    frameEnd();
+}
+#else
 void SDL_GL_SwapBuffers(void)
 {
     static void (*real)(void);
@@ -225,18 +340,35 @@ void SDL_GL_SwapBuffers(void)
     if (getConfig()->fpsLimiter)
         frameTiming();
 }
+#endif
 
 // Games with SDL linked in get glXSwapBuffers from libGL with dlsym: they are
 // handed this one instead (see rtDump.c).
 void rtGlxSwapBuffers(void *display, unsigned long drawable)
 {
+    frameBegin(0, 0);
+#ifdef _WIN32
+    // The WGL counterpart: the swap of the current context, from the GL
+    // library's own entry points.
+    (void)display;
+    (void)drawable;
+    static HDC (*wglGetCurrentDC)(void) = NULL;
+    static int (*wglSwapBuffers)(HDC) = NULL;
+    if (!wglGetCurrentDC || !wglSwapBuffers)
+    {
+        wglGetCurrentDC = (HDC (*)(void))GetProcAddress(rtGlDll(), "wglGetCurrentDC");
+        wglSwapBuffers = (int (*)(HDC))GetProcAddress(rtGlDll(), "wglSwapBuffers");
+    }
+    HDC dc = wglGetCurrentDC ? wglGetCurrentDC() : NULL;
+    if (dc && wglSwapBuffers)
+        wglSwapBuffers(dc);
+#else
     static void (*real)(void *, unsigned long);
-
     if (!real)
         real = rtRealDlsym(RTLD_NEXT, "glXSwapBuffers");
-    frameBegin(0, 0);
     if (real)
         real(display, drawable);
+#endif
     frameEnd();
     if (getConfig()->fpsLimiter)
         frameTiming();
@@ -260,9 +392,15 @@ void rtSdlGlSwapWindow(void (*real)(void *), void *window)
 // loader's own glutSwapBuffers is its Lindbergh glut bridge.
 void rtGlutSwapBuffers(void)
 {
-    static void (*real)(void);
     static int (*glutGet)(int);
 
+#ifdef _WIN32
+    // The game's glut is the loader's bridge itself (see graphics/glutBridge.c).
+    glutGet = bridgeGlutGet;
+    frameBegin(glutGet(GLUT_WINDOW_WIDTH), glutGet(GLUT_WINDOW_HEIGHT));
+    bridgeGlutSwapBuffers();
+#else
+    static void (*real)(void);
     if (!real)
     {
         real = dlsym(RTLD_NEXT, "glutSwapBuffers");
@@ -271,6 +409,7 @@ void rtGlutSwapBuffers(void)
     frameBegin(glutGet ? glutGet(GLUT_WINDOW_WIDTH) : 0, glutGet ? glutGet(GLUT_WINDOW_HEIGHT) : 0);
     if (real)
         real();
+#endif
     frameEnd();
     if (getConfig()->fpsLimiter)
         frameTiming();
@@ -387,14 +526,21 @@ static int setMode(int mode)
 
 static int windowOpen(int width, int height, int fullscreen)
 {
-    static void (*glutFullScreen)(void);
     int ret = windowOpenOrig(width, height, 0);
 
     (void)fullscreen;
-    if (!glutFullScreen)
-        glutFullScreen = dlsym(RTLD_NEXT, "glutFullScreen");
-    if (ret >= 0 && getConfig()->fullscreen && !videoGame->glutWindowOnly && glutFullScreen)
-        glutFullScreen();
+    if (ret >= 0 && getConfig()->fullscreen && !videoGame->glutWindowOnly)
+    {
+#ifdef _WIN32
+        bridgeGlutFullScreen();
+#else
+        static void (*glutFullScreen)(void);
+        if (!glutFullScreen)
+            glutFullScreen = dlsym(RTLD_NEXT, "glutFullScreen");
+        if (glutFullScreen)
+            glutFullScreen();
+#endif
+    }
     return ret;
 }
 
@@ -452,11 +598,21 @@ static void *setVideoMode(int width, int height, int bpp, uint32_t flags)
 // [Display] FULLSCREEN says.
 static int enterGameMode(void)
 {
+    const GameData *data = getGameData(getConfig()->crc32);
+    int w = getConfig()->width, h = getConfig()->height;
+
+#ifdef _WIN32
+    // The game's glut is the loader's bridge (see graphics/glutBridge.c).
+    if (w > 0 && h > 0)
+        bridgeGlutInitWindowSize(w, h);
+    int window = bridgeGlutCreateWindow(data ? data->gameTitle : "Raw Thrills");
+    if (getConfig()->fullscreen)
+        bridgeGlutFullScreen();
+    return window;
+#else
     void (*initWindowSize)(int, int) = dlsym(RTLD_NEXT, "glutInitWindowSize");
     int (*createWindow)(const char *) = dlsym(RTLD_NEXT, "glutCreateWindow");
     void (*fullScreen)(void) = dlsym(RTLD_NEXT, "glutFullScreen");
-    const GameData *data = getGameData(getConfig()->crc32);
-    int w = getConfig()->width, h = getConfig()->height;
 
     if (!createWindow)
         return 0;
@@ -466,6 +622,7 @@ static int enterGameMode(void)
     if (getConfig()->fullscreen && fullScreen)
         fullScreen();
     return window;
+#endif
 }
 
 static void gameModeString(const char *mode)
@@ -489,12 +646,16 @@ static void turnedReshape(int width, int height)
 
 static void reshapeFunc(void (*callback)(int, int))
 {
+    gameReshape = callback;
+#ifdef _WIN32
+    bridgeGlutReshapeFunc(callback ? turnedReshape : NULL);
+#else
     static void (*real)(void (*)(int, int));
     if (!real)
         real = dlsym(RTLD_NEXT, "glutReshapeFunc");
-    gameReshape = callback;
     if (real)
         real(callback ? turnedReshape : NULL);
+#endif
 }
 
 // A fixedFrame game's window (SDL_SetVideoMode, from its imports) is opened
@@ -502,6 +663,10 @@ static void reshapeFunc(void (*callback)(int, int))
 void *rtFrameOverride(const char *name)
 {
     const RtGame *g = rtCurrentGame();
+#ifdef _WIN32
+    if (!strcmp(name, "SDL_GL_SwapBuffers"))
+        return (void *)rtSdlSwapBuffers;
+#endif
     if (g && g->glutGameModeWindow && !strcmp(name, "glutEnterGameMode"))
         return (void *)enterGameMode;
     if (g && g->glutGameModeWindow && !strcmp(name, "glutGameModeString"))
@@ -511,7 +676,15 @@ void *rtFrameOverride(const char *name)
     if (!g || !g->fixedFrame || strcmp(name, "SDL_SetVideoMode") != 0)
         return NULL;
     if (!setVideoModeOrig)
+#ifdef _WIN32
+    {
+        HMODULE hSdl = (HMODULE)bridgeGetLoadedLibrary("SDL.dll");
+        if (hSdl)
+            *(void **)&setVideoModeOrig = (void *)GetProcAddress(hSdl, "SDL_SetVideoMode");
+    }
+#else
         *(void **)&setVideoModeOrig = dlsym(RTLD_NEXT, name);
+#endif
     return setVideoModeOrig ? (void *)setVideoMode : NULL;
 }
 
@@ -546,6 +719,14 @@ static void dflt2DCam(float w, float h)
 // The executable's code segment, the one holding address.
 static int codeSegment(uint32_t address, uint8_t **start, uint8_t **end)
 {
+#ifdef _WIN32
+    uint32_t s, e;
+    if (!rtMainCodeSegment(address, &s, &e))
+        return 0;
+    *start = (uint8_t *)(uintptr_t)s;
+    *end = (uint8_t *)(uintptr_t)e;
+    return 1;
+#else
     const Elf32_Phdr *phdr = (const Elf32_Phdr *)getauxval(AT_PHDR);
     unsigned long count = getauxval(AT_PHNUM);
 
@@ -558,6 +739,7 @@ static int codeSegment(uint32_t address, uint8_t **start, uint8_t **end)
             return 1;
         }
     return 0;
+#endif
 }
 
 static void installLayout(const RtGame *game)
@@ -597,7 +779,12 @@ static void installLayout(const RtGame *game)
         return;
     }
     uintptr_t page = (uintptr_t)start & ~(uintptr_t)0xfff;
+#ifdef _WIN32
+    DWORD old;
+    VirtualProtect((void *)page, (uintptr_t)end - page, PAGE_EXECUTE_READWRITE, &old);
+#else
     mprotect((void *)page, (uintptr_t)end - page, PROT_READ | PROT_WRITE | PROT_EXEC);
+#endif
     for (uint8_t *p = start; p + 7 <= end; p++)
     {
         uint32_t at = (uint32_t)(uintptr_t)p;
@@ -670,7 +857,7 @@ void rtInstallVideo(const RtGame *game)
     int turned = game->frameTurn && !getConfig()->rotateVertical;
     if (((game->rotateFlag && game->monitorSize && game->orthoSymbol && !getConfig()->rotateVertical) || turned ||
          (game->bezelFrame && getConfig()->width > getConfig()->height)) &&
-        enabled && bezel[0] && (enabled > 0 || access(bezel, R_OK) == 0) && bezelLoad(bezel))
+        enabled && bezel[0] && (enabled > 0 || bezelCanRead(bezel)) && bezelLoad(bezel))
         setFrameOverlay(bezelDraw);
     // A turned frame is fitted upright in the window, in the bezel's hole.
     if (turned)
@@ -709,7 +896,13 @@ void rtInstallVideo(const RtGame *game)
         // fit its picture to a resized window itself.
         *(void **)&realViewport = frameScaleWrapper("glViewport");
         if (!realViewport)
+        {
+#ifdef _WIN32
+            realViewport = (void (*)(int, int, int, int))rtRealGlProc("glViewport");
+#else
             realViewport = dlsym(RTLD_NEXT, "glViewport");
+#endif
+        }
         orthoOrig = rtTrampoline(game->orthoSymbol, game->orthoPrologue);
         if (realViewport && orthoOrig)
             rtDetour(game->orthoSymbol, setOrtho);

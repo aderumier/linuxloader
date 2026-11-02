@@ -12,7 +12,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "rawthrills.h"
 #include "../common/desktopInput.h"
@@ -62,7 +64,9 @@ static int dongleMemRead(void *handle, int offset, int length, void *buffer)
 #define SPINNER_MOUSE_SCALE 0.02f // counts per analogue unit (0xffff a window)
 #define SPINNER_STICK_DEADZONE 0.1f // of the stick's half travel
 
+#ifdef __linux__
 extern Controllers controllers;
+#endif
 
 static int spinnerHandle; // the game's usb_dev_handle: any non-NULL pointer
 static int stickMapped;   // ANALOGUE_3 has a device (else it reads 0: full left)
@@ -76,15 +80,14 @@ static void spinnerAdd(int counts)
 
 static int sampleInput(void)
 {
-    static struct timespec last;
+    static uint32_t lastMs;
     static float carry;
     static int lastX = -1;
-    struct timespec now;
     JVSIO *io = getConfig()->inputMode == 2 ? getJVSIO() : desktopInputState();
 
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    float dt = last.tv_sec ? (now.tv_sec - last.tv_sec) + (now.tv_nsec - last.tv_nsec) / 1e9f : 0;
-    last = now;
+    uint32_t nowMs = rtNowMs();
+    float dt = lastMs ? (nowMs - lastMs) / 1000.0f : 0;
+    lastMs = nowMs;
     if (dt > 0.1f)
         dt = 0.1f;
 
@@ -136,7 +139,7 @@ static int spinnerUsbRead(void *handle, int endpoint, char *buffer, int size, in
 {
     (void)endpoint;
     (void)timeout;
-    usleep(SPINNER_REPORT_US);
+    rtSleepMs(SPINNER_REPORT_US / 1000);
     if (handle != &spinnerHandle || !buffer || size < 4)
         return -110;
     int counts = spinnerPending;
@@ -158,7 +161,9 @@ void rtWofInstall(const RtGame *game)
     dongleChecksum = (uint32_t (*)(const void *, int))rtSymbol("DongleChecksum");
     if (rtDetour("DongleMemRead", dongleMemRead) != 0)
         log_warn("Raw Thrills: cannot hook Wheel of Fortune's dongle memory read");
+#ifdef __linux__
     stickMapped = getConfig()->inputMode == 2 && evdevAxisController(&controllers, "ANALOGUE_3");
+#endif
     rioSampleInputOrig = rtTrampoline("RIO_SampleInput", 6);
     if (rtDetour("RIO_SampleInput", sampleInput) != 0 || rtDetour("SpinnerOpen", spinnerOpen) != 0 ||
         rtDetour("SpinnerClose", spinnerClose) != 0 || rtDetour("SpinnerUsbRead", spinnerUsbRead) != 0)

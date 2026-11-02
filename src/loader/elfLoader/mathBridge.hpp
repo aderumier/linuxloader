@@ -36,6 +36,8 @@ namespace MathBridge
     extern "C" float bridge_acosf(float x);
     extern "C" double bridge_pow(double x, double y);
     extern "C" float bridge_powf(float x, float y);
+    extern "C" double bridge_pow_finite(double x, double y);
+    extern "C" float bridge_powf_finite(float x, float y);
     extern "C" double bridge_hypot(double x, double y);
     extern "C" float bridge_hypotf(float x, float y);
     extern "C" double bridge_modf(double x, double *iptr);

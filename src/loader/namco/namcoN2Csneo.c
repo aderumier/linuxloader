@@ -27,26 +27,51 @@
 // table is complete (29 882 entries), so every hook goes by name; the few
 // static helpers (CheckCSVLine / CheckCSVColumn) are the engine's own
 // _Z12CheckCSVLine... / _Z14CheckCSVColumn... entries.
+//
+// On Windows the engine is a Linux shared object the loader loads natively
+// (the game's dlopen goes through the loader's bridge, which maps its
+// segments into this process): its dynamic symbols are the resolver's native
+// exports, and the launcher's own dlopen import is hooked (importHook.h) to
+// run the install when the engine appears.
 
-#include <dlfcn.h>
-#include <elf.h>
 #include <errno.h>
-#include <link.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <stdarg.h>
-#include <fcntl.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#include <elf.h>
+#include <link.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
 #include <unistd.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <windows.h>
+#include <direct.h>
+#include <io.h>
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#endif
 
 #include "namcoN2.h"
 #include "../log/log.h"
+
+#ifdef _WIN32
+// The resolver's view of the natively loaded engine (see
+// elfLoader/symbolResolver.cpp), and the import hook (common/importHook.h).
+void *bridgeFindNativeSymbol(const char *name);
+void *hookExecutableImport(const char *name, void *replacement);
+#endif
 
 // ---------------------------------------------------------------------------
 // The dlopen'd engine: the object whose file name is engine_*.so. The launcher
@@ -54,8 +79,6 @@
 // install is requested), so the install runs when the engine appears in the
 // process's loaded objects: the launcher NEEDs libdl, so its dlopen calls go
 // through the libdl wrapper and can be interposed here.
-
-static int csneoInstalled;
 
 void namcoN2CsneoInstall(void);
 
@@ -88,7 +111,15 @@ const char *csneoMapFreespace(const char *path, int flags, char *buf, size_t siz
     const char *rest;
     const char *freespace;
     if (!workDir[0])
-        getcwd(workDir, sizeof(workDir));
+    {
+#ifdef _WIN32
+        if (!GetCurrentDirectoryA(sizeof(workDir), workDir))
+            workDir[0] = '\0';
+#else
+        if (!getcwd(workDir, sizeof(workDir)))
+            workDir[0] = '\0';
+#endif
+    }
     if (!strncmp(path, "freespace/", 10))
         rest = path + 10;
     else if (!strncmp(path, "/freespace/", 11))
@@ -115,6 +146,9 @@ const char *csneoMapFreespace(const char *path, int flags, char *buf, size_t siz
         snprintf(buf, size, "%s/TeknoParrot/%s", workDir, rest);
     return buf;
 }
+
+#ifndef _WIN32
+static int csneoInstalled;
 
 // The cabinet's libSDL-1.2.so.0 / libCgGL.so (in csneo2/lib, found through
 // the engine's RPATH "../lib", which beats LD_LIBRARY_PATH) route every GL
@@ -304,6 +338,96 @@ static int writable(void *address, size_t n)
     }
     return 0;
 }
+#else
+// Windows: the engine is loaded natively by the loader's dlopen bridge
+// (bridgeLoadNeededLibrary), its dynamic symbols among the resolver's native
+// exports. The launcher's own dlopen import is hooked so the install runs
+// when the engine appears.
+
+static int csneoEngineLoaded;
+static void *(*csneoRealDlopen)(const char *, int);
+
+static void csneoWindowsPreloadShims(void);
+
+static void *csneoWindowsDlopen(const char *filename, int flags)
+{
+    void *handle;
+    if (filename && strstr(filename, "engine_") != NULL && !csneoEngineLoaded)
+        csneoWindowsPreloadShims();
+    handle = csneoRealDlopen ? csneoRealDlopen(filename, flags) : NULL;
+    if (handle && filename && strstr(filename, "engine_") != NULL)
+        csneoEngineLoaded = 1;
+    return handle;
+}
+
+// The engine's own libSDL-1.2.so.0 (in csneo2\lib) routes every GL call
+// through the cabinet's Alchemy GPU driver (absent on a PC), as on Linux its
+// RPATH "../lib" beats everything. The standard SDL 1.2 and the CgGL /
+// SDLAdm shims must be loaded before the engine: the resolver keeps the
+// first registration of a name, so the engine's SDL_*/cgGL* imports bind to
+// them. The shims are the loader's own (ll-deps); the standard SDL 1.2 comes
+// from the user's CSNEO_LIBS directory (as on Linux) or ll-deps too.
+static void csneoWindowsPreloadShims(void)
+{
+    static const char *const shims[] = {"libSDLAdm.so", "libCgGL.so", "libSDL-1.2.so.0"};
+    const char *const *dirs[2];
+    static char envDir[4096];
+    int nDirs = 0;
+
+    const char *env = getenv("CSNEO_LIBS");
+    if (env)
+    {
+        strncpy(envDir, env, sizeof(envDir) - 1);
+        envDir[sizeof(envDir) - 1] = '\0';
+        dirs[nDirs++] = envDir;
+    }
+    dirs[nDirs++] = "ll-deps";
+
+    for (size_t i = 0; i < sizeof(shims) / sizeof(shims[0]); i++)
+    {
+        int found = 0;
+        for (int d = 0; d < nDirs && !found; d++)
+        {
+            char path[4096];
+            snprintf(path, sizeof(path), "%s\\%s", dirs[d], shims[i]);
+            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+            {
+                log_info("CSNeo: preloading %s", path);
+                csneoRealDlopen(path, 0);
+                found = 1;
+            }
+        }
+        if (!found && !strcmp(shims[i], "libSDL-1.2.so.0"))
+            log_warn("CSNeo: no standard SDL 1.2 (put libSDL-1.2.so.0 in CSNEO_LIBS or in ll-deps\\): "
+                     "the engine will use the cabinet's Alchemy SDL and its window will fail");
+    }
+}
+
+static void *engineSymbol(const char *name)
+{
+    return bridgeFindNativeSymbol(name);
+}
+
+static int writable(void *address, size_t n)
+{
+    uintptr_t page = (uintptr_t)address & ~(uintptr_t)0xfff;
+    size_t len = ((uintptr_t)address + n - page + 0xfff) & ~(size_t)0xfff;
+    DWORD old;
+    if (VirtualProtect((void *)page, len, PAGE_EXECUTE_READWRITE, &old) == 0)
+    {
+        if (getenv("CSNEO_TRACE"))
+            fprintf(stderr, "CSNeo: VirtualProtect RWX failed on %p len=%zu (error %lu)\n", (void *)page, len, GetLastError());
+        return 0;
+    }
+    return 1;
+}
+#endif
+
+static void writeJump(uint8_t *from, const void *to)
+{
+    from[0] = 0xe9;
+    *(int32_t *)(from + 1) = (int32_t)((const uint8_t *)to - (from + 5));
+}
 
 static int engineHook(const char *name, void *replacement)
 {
@@ -315,8 +439,7 @@ static int engineHook(const char *name, void *replacement)
     }
     if (!writable(target, 5))
         return 0;
-    target[0] = 0xe9;
-    *(int32_t *)(target + 1) = (int32_t)((const uint8_t *)replacement - (target + 5));
+    writeJump(target, replacement);
     return 1;
 }
 
@@ -325,14 +448,23 @@ static int engineHook(const char *name, void *replacement)
 // build.
 static int engineHookAt(uint32_t offset, void *replacement)
 {
+#ifdef _WIN32
+    (void)offset;
+    (void)replacement;
+    // The engine's base is not known on Windows (its dynamic symbols are the
+    // resolver's native exports, looked up by name above): the name-based
+    // hooks cover the same symbols, the offset fallback is Linux-only.
+    log_warn("CSNeo: the offset-based hook is not available on Windows (the name-based one was not found)");
+    return 0;
+#else
     if (!engineBase)
         return 0;
     uint8_t *target = (uint8_t *)(uintptr_t)(engineBase + offset);
     if (!writable(target, 5))
         return 0;
-    target[0] = 0xe9;
-    *(int32_t *)(target + 1) = (int32_t)((const uint8_t *)replacement - (target + 5));
+    writeJump(target, replacement);
     return 1;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +490,8 @@ static int muOpenFail(void)
 // refused and the online play/clan features simply do not come up. AF_UNIX
 // (Unix domain sockets) must be allowed through: SDL's X11 video driver and
 // the engine's local loopback game server both use Unix sockets, and blocking
-// them breaks the GL window and the client/server handshake.
+// them breaks the GL window and the client/server handshake. (AF_UNIX and
+// AF_INET have the same values on Windows: 1 and 2.)
 static int connectFail(int domain, const void *addr, int addrlen)
 {
     (void)addr;
@@ -368,6 +501,7 @@ static int connectFail(int domain, const void *addr, int addrlen)
     return -1; // no cabinet network for TCP/IP
 }
 
+#ifndef _WIN32
 // ---------------------------------------------------------------------------
 // SDL 1.2 interposers.
 //
@@ -443,6 +577,7 @@ static int sdlGLAttrReal(void)
 // SDL_Init(0x100020) = SDL_INIT_VIDEO | SDL_INIT_NOPARACHUTE. If the video
 // driver fails to init, SDL_GetVideoInfo() returns NULL and InitDraw dies.
 
+#endif
 
 // The cabinet's menu/main loop (menu/sdl_main.cpp): SDL_Init, the GL
 // attributes, SDL_SetVideoMode, then the menuMain/SDL_PollEvent loop. It is
@@ -474,11 +609,17 @@ typedef void (*sdlSwapFn)(void);
 
 static void *engineDlsym(const char *name)
 {
+#ifndef _WIN32
     // The engine is the last object dlopen'd; its own libSDL-1.2.so.0 and its
     // menu functions are in the global scope by then. dlsym(RTLD_DEFAULT)
     // finds them (the loader's own SDL3 symbols have different names, so there
     // is no clash with the SDL 1.2 names).
     return dlsym(RTLD_DEFAULT, name);
+#else
+    // The engine and its SDL 1.2 are natively loaded shared objects: their
+    // dynamic symbols are the resolver's native exports.
+    return bridgeFindNativeSymbol(name);
+#endif
 }
 
 static int csneoSdlMain(int argc, char **argv)
@@ -650,7 +791,8 @@ static int csneoInitDraw(void *self)
 // fstat'ed to get the real size.
 // The COpenedFile struct in the cabinet FS stdio module contains a FILE* at
 // an unknown offset. Try the common ones (0..16) and validate by checking
-// that fileno() succeeds on the candidate pointer.
+// that fileno() succeeds on the candidate pointer. (The FILE* is the host
+// CRT's: the cabinet module's fopen goes through the loader's bridge.)
 static int fsSizeReal(void *file)
 {
     if (!file)
@@ -660,11 +802,19 @@ static int fsSizeReal(void *file)
         void *candidate = *(void **)((char *)file + off);
         if (!candidate)
             continue;
+#ifdef _WIN32
+        int fd = _fileno((FILE *)candidate);
+        if (fd >= 0)
+        {
+            struct stat st;
+            if (_fstat(fd, &st) == 0 && st.st_size > 0)
+#else
         int fd = fileno((FILE *)candidate);
         if (fd >= 0)
         {
             struct stat st;
             if (fstat(fd, &st) == 0 && st.st_size > 0)
+#endif
             {
                 off_t sz = st.st_size;
                 if (sz > 0x7fffffff)
@@ -698,7 +848,11 @@ const char *csneoRedirectPath(const char *path, char *buf, size_t size)
 static void *csneoAutoStartThread(void *arg)
 {
     (void)arg;
+#ifdef _WIN32
+    Sleep(10 * 1000);
+#else
     sleep(10);
+#endif
     void *(*cbufInsertText)(const char *) = engineSymbol("Cbuf_InsertText");
     if (cbufInsertText)
         cbufInsertText("map neo_01collision\n");
@@ -707,6 +861,7 @@ static void *csneoAutoStartThread(void *arg)
 
 void namcoN2CsneoInstall(void)
 {
+#ifndef _WIN32
     cacheEngineNow();
     if (!engineBase)
     {
@@ -716,6 +871,31 @@ void namcoN2CsneoInstall(void)
         log_info("CSNeo: engine not loaded yet; the stubs install at dlopen");
         return;
     }
+#else
+    if (!csneoEngineLoaded)
+    {
+        // The engine is not loaded yet: the launcher dlopen's it in main(),
+        // after initMain() ran, so the hook on the launcher's own dlopen
+        // import re-enters this function from the right moment. (The hlds
+        // launcher imports dlopen: it dlopen's the engine; the hook's
+        // original is the loader's dlopen bridge.)
+        if (!csneoRealDlopen)
+        {
+            // The launcher dlopen's the engine; its import may be dlopen or
+            // its glibc alias dlopen64.
+            csneoRealDlopen = (void *(*)(const char *, int))hookExecutableImport("dlopen", (void *)csneoWindowsDlopen);
+            if (!csneoRealDlopen)
+                csneoRealDlopen = (void *(*)(const char *, int))hookExecutableImport("dlopen64", (void *)csneoWindowsDlopen);
+            if (!csneoRealDlopen)
+            {
+                log_error("CSNeo: the launcher's dlopen import was not found; the engine cannot be hooked");
+                return;
+            }
+            log_info("CSNeo: engine not loaded yet; the stubs install at dlopen");
+        }
+        return;
+    }
+#endif
 
     // The coin/hasp USB dongle: present, logged in, empty. hasp_login (the
     // engine's HASP shim) is what the USB class wraps; with it answering 1,
@@ -777,7 +957,7 @@ void namcoN2CsneoInstall(void)
         void *id = engineSymbol("_ZN9nsSdlWrap6CMtSDL8InitDrawEv");
         int wr = id ? writable(id, 5) : -1;
         if (getenv("CSNEO_TRACE"))
-            fprintf(stderr, "CSNeo: InitDraw symbol=%p handle=%p writable=%d\n", id, engineHandle, wr);
+            fprintf(stderr, "CSNeo: InitDraw symbol=%p writable=%d\n", id, wr);
         if (engineHook("_ZN9nsSdlWrap6CMtSDL8InitDrawEv", csneoInitDraw))
             log_info("CSNeo: InitDraw replaced (Mesa-compatible GL attributes)");
     }

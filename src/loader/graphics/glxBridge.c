@@ -753,6 +753,10 @@ extern "C"
 
     void glXSwapBuffers(Display *dpy, GLXDrawable drawable)
     {
+        // The windowX11 games (the Namco ES1's, with their own X window)
+        // draw into the loader's frame; it is scaled into the window here,
+        // before the swap (a no-op for the other games).
+        namcoEs1BeforeSwap(dpy, drawable);
         bridgeGlxSwapBuffers(dpy, drawable);
     }
 

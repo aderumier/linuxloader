@@ -1,6 +1,18 @@
 // Raw Thrills (g5 engine) support: game detection, init and the filesystem
 // and GL fixes those games need. See rawthrills.h.
 
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <windows.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 260
+#endif
+#else
 #include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
@@ -9,7 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
+#endif
 
 #include "rawthrills.h"
 #include "../common/desktopInput.h"
@@ -39,6 +53,41 @@ const RtGame *rtCurrentGame(void)
 int isRawThrillsGame(void)
 {
     return rtCurrentGame() != NULL;
+}
+
+uint32_t rtNowMs(void)
+{
+#ifdef _WIN32
+    static LARGE_INTEGER perMs;
+    LARGE_INTEGER now;
+
+    if (!perMs.QuadPart)
+    {
+        LARGE_INTEGER freq;
+        QueryPerformanceFrequency(&freq);
+        perMs.QuadPart = freq.QuadPart / 1000;
+    }
+    QueryPerformanceCounter(&now);
+    return (uint32_t)(now.QuadPart / perMs.QuadPart);
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000);
+#endif
+}
+
+double rtNowSeconds(void)
+{
+    return rtNowMs() / 1000.0;
+}
+
+void rtSleepMs(uint32_t ms)
+{
+#ifdef _WIN32
+    Sleep(ms);
+#else
+    usleep(ms * 1000);
+#endif
 }
 
 const char *rtGameDir(void)
@@ -153,6 +202,11 @@ const char *rtRedirectCommand(const char *command, char *buf, size_t size)
     return changed ? buf : command;
 }
 
+// The games' popen and system: the cabinet's paths in their commands, as for
+// the game's own file calls. (Windows: the loader's popen bridge does it,
+// see elfLoader/libcBridge.cpp; __pow_finite and pthread_join, the
+// loader's bridge, too.)
+#ifndef _WIN32
 FILE *popen(const char *command, const char *type)
 {
     static FILE *(*real)(const char *, const char *);
@@ -203,6 +257,7 @@ int pthread_join(pthread_t thread, void **ret)
         return ESRCH;
     return real(thread, ret);
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // GL: shader sources NVIDIA accepts but not Mesa, applied in place to the
@@ -348,32 +403,54 @@ int rtInit(void)
 
     // The launcher starts the game from its directory, which stands in for
     // the cabinet's root (e.g. /pm).
+#ifdef _WIN32
+    if (!_getcwd(gameDir, sizeof(gameDir)))
+#else
     if (!getcwd(gameDir, sizeof(gameDir)))
+#endif
         strcpy(gameDir, ".");
     snprintf(usbDir, sizeof(usbDir), "%s/rawthrills/usbflash", gameDir);
     snprintf(udevDir, sizeof(udevDir), "%s/rawthrills/udev", gameDir);
+#ifdef _WIN32
+    _mkdir(join((char[PATH_MAX]){0}, PATH_MAX, gameDir, "/rawthrills"));
+    _mkdir(usbDir);
+    _mkdir(udevDir);
+    _mkdir(join((char[PATH_MAX]){0}, PATH_MAX, udevDir, "/rules.d"));
+#else
     mkdir(join((char[PATH_MAX]){0}, PATH_MAX, gameDir, "/rawthrills"), 0755);
     mkdir(usbDir, 0755);
     mkdir(udevDir, 0755);
     mkdir(join((char[PATH_MAX]){0}, PATH_MAX, udevDir, "/rules.d"), 0755);
+#endif
     if (g->workDir)
     {
         char dir[PATH_MAX];
         snprintf(dir, sizeof(dir), "%s/%s", gameDir, g->workDir);
+#ifdef _WIN32
+        if (_chdir(dir) != 0)
+#else
         if (chdir(dir) != 0)
+#endif
             log_warn("Raw Thrills: cannot enter %s", dir);
     }
 
     // sdl12-compat's GL scaling renders into its own FBO and relies on
     // catching glBindFramebuffer through SDL_GL_GetProcAddress; the game
     // links GL directly, so the swap would blit an empty FBO (black screen).
+#ifdef _WIN32
+    SetEnvironmentVariableA("SDL12COMPAT_OPENGL_SCALING", "0");
+#else
     setenv("SDL12COMPAT_OPENGL_SCALING", "0", 1);
+#endif
 
     // The launcher's stack limit is for the main thread, but glibc gives
     // every thread that much too: games with many threads run out of their
     // 32-bit address space with it.
     if (g->threadStackSize)
     {
+#ifdef _WIN32
+        rtSetDefaultThreadStackSize(g->threadStackSize);
+#else
         pthread_attr_t attr;
         if (pthread_getattr_default_np(&attr) == 0)
         {
@@ -381,6 +458,7 @@ int rtInit(void)
             pthread_setattr_default_np(&attr);
             pthread_attr_destroy(&attr);
         }
+#endif
     }
 
     rtClearBss(g);

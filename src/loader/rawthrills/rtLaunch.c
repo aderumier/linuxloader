@@ -7,15 +7,131 @@
 // therefore runs a copy of the ELF with those values cleared, kept in the
 // user's cache directory; the game directory is left untouched.
 
-#include <elf.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <elf.h>
+#include <sys/resource.h>
 #include <unistd.h>
+#endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#ifdef _WIN32
+// MinGW ships no elf.h: the repairs only rewrite the file's raw bytes, so
+// the layouts are all they need.
+typedef struct
+{
+    unsigned char e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint32_t e_entry;
+    uint32_t e_phoff;
+    uint32_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} Elf32_Ehdr;
+
+typedef struct
+{
+    uint32_t p_type;
+    uint32_t p_offset;
+    uint32_t p_vaddr;
+    uint32_t p_paddr;
+    uint32_t p_filesz;
+    uint32_t p_memsz;
+    uint32_t p_flags;
+    uint32_t p_align;
+} Elf32_Phdr;
+
+typedef struct
+{
+    uint32_t d_tag;
+    union
+    {
+        uint32_t d_val;
+        uint32_t d_ptr;
+    } d_un;
+} Elf32_Dyn;
+
+typedef struct
+{
+    uint32_t r_offset;
+    uint32_t r_info;
+} Elf32_Rel;
+
+typedef struct
+{
+    uint32_t st_name;
+    uint32_t st_value;
+    uint32_t st_size;
+    unsigned char st_info;
+    unsigned char st_other;
+    uint16_t st_shndx;
+} Elf32_Sym;
+
+typedef struct
+{
+    uint16_t vd_version;
+    uint16_t vd_flags;
+    uint16_t vd_ndx;
+    uint16_t vd_cnt;
+    uint32_t vd_hash;
+    uint32_t vd_aux;
+    uint32_t vd_next;
+} Elf32_Verdef;
+
+typedef uint32_t Elf32_Word;
+typedef uint32_t Elf32_Addr;
+
+#define EI_CLASS 4
+#define EI_PAD 9
+#define EI_NIDENT 16
+#define ELFCLASS32 1
+#define PT_LOAD 1
+#define PT_DYNAMIC 2
+#define PT_PHDR 6
+#define PF_X 1
+#define DT_NULL 0
+#define DT_NEEDED 1
+#define DT_HASH 4
+#define DT_STRTAB 5
+#define DT_SYMTAB 6
+#define DT_REL 17
+#define DT_RELSZ 18
+#define DT_VERDEF 0x6ffffffc
+#define DT_VERDEFNUM 0x6ffffffd
+#define R_386_COPY 5
+#define SHN_UNDEF 0
+#define SHN_ABS 0xfff1
+#define STB_LOCAL 0
+#define STB_GLOBAL 1
+#define STB_WEAK 2
+#define STT_OBJECT 1
+#define VER_DEF_CURRENT 1
+#define ELF32_ST_INFO(b, t) (((b)<<4) + ((t)&0xf))
+#define ELF32_ST_TYPE(i) ((i)&0xf)
+#define ELF32_ST_BIND(i) ((i)>>4)
+#define ELF32_R_TYPE(i) ((i)&0xff)
+#define ELFMAG "\x7f""ELF"
+#define SELFMAG 4
+#endif // _WIN32
 
 #include "rtGame.h"
 #include "../config/iniParser.h"
@@ -23,20 +139,34 @@
 
 #define RT_STACK_SIZE (64u << 20)
 
+static int makeDir(const char *path)
+{
+#ifdef _WIN32
+    return _mkdir(path) != 0 && errno != EEXIST;
+#else
+    return mkdir(path, 0755) != 0 && errno != EEXIST;
+#endif
+}
+
 static int mkdirs(const char *path)
 {
     char buf[PATH_MAX];
     snprintf(buf, sizeof(buf), "%s", path);
     for (char *p = buf + 1; *p; p++)
     {
-        if (*p != '/')
+        if (*p != '/'
+#ifdef _WIN32
+            && *p != '\\'
+#endif
+        )
             continue;
+        char sep = *p;
         *p = '\0';
-        if (mkdir(buf, 0755) != 0 && errno != EEXIST)
+        if (makeDir(buf) != 0)
             return -1;
-        *p = '/';
+        *p = sep;
     }
-    return mkdir(buf, 0755) != 0 && errno != EEXIST ? -1 : 0;
+    return makeDir(buf) != 0 ? -1 : 0;
 }
 
 static int readFile(const char *path, unsigned char **data, size_t *size)
@@ -356,6 +486,10 @@ static int writeFile(const char *path, const unsigned char *data, size_t size)
 
 static void cacheDir(char *buf, size_t size, uint32_t fileCrc32)
 {
+#ifdef _WIN32
+    const char *local = getenv("LOCALAPPDATA");
+    snprintf(buf, size, "%s\\linuxloader\\rawthrills\\%08x", local && local[0] ? local : ".", fileCrc32);
+#else
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
 
@@ -363,9 +497,11 @@ static void cacheDir(char *buf, size_t size, uint32_t fileCrc32)
         snprintf(buf, size, "%s/linuxloader/rawthrills/%08x", xdg, fileCrc32);
     else
         snprintf(buf, size, "%s/.cache/linuxloader/rawthrills/%08x", home ? home : "/tmp", fileCrc32);
+#endif
 }
 
 // [Display] WIDTH and HEIGHT of the configuration, 0 if not set.
+#ifndef _WIN32
 static void configSize(const char *configPath, int *width, int *height)
 {
     IniConfig *ini = configPath && configPath[0] ? iniLoad(configPath) : NULL;
@@ -451,3 +587,54 @@ void rtPrepareCommand(char *command, size_t size, uint32_t fileCrc32, const char
         setrlimit(RLIMIT_STACK, &stack);
     }
 }
+#endif // _WIN32
+
+#ifdef _WIN32
+// Windows counterpart of rtPrepareCommand: the game runs inside the loader's
+// process, so instead of rewriting an exec command it hands back the path of
+// a patched copy. The copy is built the same way (cacheDir, one per CRC), and
+// the game's own directory is left untouched, so its libraries still resolve.
+// Returns 0 and fills out with the path to load, -1 when the game is loaded
+// as is (no patched copy needed) or the copy could not be prepared.
+int rtPrepareElfCopy(const char *elfPath, char *out, size_t outSize, uint32_t fileCrc32)
+{
+    const RtGame *game = rtGetGameByFileCrc(fileCrc32);
+    char dir[PATH_MAX], copy[PATH_MAX + 256];
+    struct stat src, dst;
+    unsigned char *data = NULL;
+    size_t len;
+    const char *base;
+
+    if (!game)
+        return -1;
+
+    cacheDir(dir, sizeof(dir), fileCrc32);
+    base = strrchr(elfPath, '/');
+    {
+        const char *b = strrchr(elfPath, '\\');
+        if (b && (!base || b > base))
+            base = b;
+    }
+    snprintf(copy, sizeof(copy), "%s\\%s", dir, base ? base + 1 : elfPath);
+
+    if (stat(elfPath, &src) != 0)
+        return -1;
+    if (stat(copy, &dst) != 0 || dst.st_size != src.st_size || dst.st_mtime < src.st_mtime)
+    {
+        int patched;
+        if (mkdirs(dir) != 0 || readFile(elfPath, &data, &len) != 0 ||
+            (patched = patchUndefinedSymbols(data, len)) < 0 || writeFile(copy, data, len) != 0)
+        {
+            log_error("Raw Thrills: cannot prepare a patched copy of %s in %s", elfPath, dir);
+            free(data);
+            return -1;
+        }
+        free(data);
+        printf("Raw Thrills: prepared %s (%d symbols patched)\n", copy, patched);
+    }
+
+    if (snprintf(out, outSize, "%s", copy) >= (int)outSize)
+        return -1;
+    return 0;
+}
+#endif // _WIN32

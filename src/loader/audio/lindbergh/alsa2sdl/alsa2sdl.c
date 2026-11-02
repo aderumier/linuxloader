@@ -434,3 +434,311 @@ const char *shared_snd_strerror(int errnum)
 {
     return "ALSA Error";
 }
+
+// ------------------------------------------------------------------
+// The rest of the ALSA API the g6 games (Angry Birds, The Walking
+// Dead) import.
+
+int shared_snd_pcm_hw_params_copy(snd_pcm_hw_params_t *dst, const snd_pcm_hw_params_t *src)
+{
+    if (dst && src)
+        *dst = *src;
+    return 0;
+}
+
+int shared_snd_pcm_hw_params_get_buffer_size(snd_pcm_hw_params_t *p, snd_pcm_uframes_t *value)
+{
+    if (p && value)
+        *value = p->buffer_size;
+    return 0;
+}
+
+int shared_snd_pcm_hw_params_get_channels(snd_pcm_hw_params_t *p, unsigned int *value)
+{
+    if (p && value)
+        *value = p->channels;
+    return 0;
+}
+
+int shared_snd_pcm_hw_params_get_periods(snd_pcm_hw_params_t *p, unsigned int *value, int *value_max)
+{
+    if (p && value)
+        *value = p->periods;
+    if (value_max)
+        *value_max = 0; // exact value
+    return 0;
+}
+
+int shared_snd_pcm_hw_params_get_period_size(snd_pcm_hw_params_t *p, snd_pcm_uframes_t *value, snd_pcm_uframes_t *value_max)
+{
+    if (p && value)
+        *value = p->period_size;
+    if (value_max)
+        *value_max = 0; // exact value
+    return 0;
+}
+
+int shared_snd_pcm_hw_params_set_periods_near(snd_pcm_t *pcm, snd_pcm_hw_params_t *p, unsigned int *value, int *dir)
+{
+    (void)pcm;
+    (void)dir;
+    if (p && value)
+        p->periods = *value;
+    return 0;
+}
+
+unsigned long shared_snd_pcm_hw_params_sizeof(void)
+{
+    return sizeof(snd_pcm_hw_params_t);
+}
+
+unsigned long shared_snd_pcm_sw_params_sizeof(void)
+{
+    return sizeof(snd_pcm_sw_params_t);
+}
+
+int shared_snd_pcm_nonblock(snd_pcm_t *pcm, int nonblock)
+{
+    (void)pcm;
+    (void)nonblock;
+    return 0;
+}
+
+int shared_snd_pcm_recover(snd_pcm_t *pcm, int err, int silent)
+{
+    (void)pcm;
+    (void)err;
+    (void)silent;
+    // No xruns here (the SDL stream just queues); nothing to recover.
+    return 0;
+}
+
+// ------------------------------------------------------------------
+// PulseAudio: the g6 games link a Pulse client alongside ALSA (on the
+// cabinet Pulse wins). On Windows there is no Pulse, so the calls are
+// routed to the same SDL audio stream: contexts and streams are
+// reported ready at once, and the samples go straight into the SDL
+// queue.
+
+struct _pa_stream
+{
+    snd_pcm_t *pcm;
+};
+
+struct _pa_simple
+{
+    snd_pcm_t *pcm;
+};
+
+static int PaOpenStream(snd_pcm_t **pcm)
+{
+    return shared_snd_pcm_open(pcm, "pulse", SND_PCM_STREAM_PLAYBACK, 0);
+}
+
+int shared_pa_channel_map_init_auto(void *map, unsigned int channels, const char *map_name)
+{
+    (void)map_name;
+    if (map)
+    {
+        ((unsigned char *)map)[0] = (unsigned char)channels;
+        ((unsigned char *)map)[1] = 0;
+    }
+    return 0;
+}
+
+void *shared_pa_mainloop_new(void)
+{
+    return calloc(1, 8);
+}
+
+void *shared_pa_mainloop_get_api(void *mainloop)
+{
+    (void)mainloop;
+    return calloc(1, 8);
+}
+
+void shared_pa_mainloop_free(void *mainloop)
+{
+    free(mainloop);
+}
+
+int shared_pa_mainloop_iterate(void *mainloop, int block, int *time)
+{
+    (void)mainloop;
+    (void)time;
+    // Nothing to pump: the samples go straight into the SDL queue.
+    SDL_Delay(block ? 10 : 1);
+    return 0;
+}
+
+void *shared_pa_context_new(void *spawncb, const char *name, void *map)
+{
+    (void)spawncb;
+    (void)name;
+    (void)map;
+    return calloc(1, 8);
+}
+
+int shared_pa_context_set_name(void *context, const char *name)
+{
+    (void)context;
+    (void)name;
+    return 0;
+}
+
+int shared_pa_context_connect(void *context, const char *server, int flags, void *auth)
+{
+    (void)context;
+    (void)server;
+    (void)flags;
+    (void)auth;
+    return 0;
+}
+
+int shared_pa_context_get_state(void *context)
+{
+    (void)context;
+    return 4; // PA_CONTEXT_READY
+}
+
+int shared_pa_context_disconnect(void *context)
+{
+    (void)context;
+    return 0;
+}
+
+int shared_pa_context_unref(void *context)
+{
+    int r = context ? 1 : 0;
+    free(context);
+    return r;
+}
+
+void *shared_pa_stream_new(void *context, const char *name, void *ss, void *map)
+{
+    (void)context;
+    (void)name;
+    (void)ss;
+    (void)map;
+    snd_pcm_t *pcm;
+    if (PaOpenStream(&pcm) != 0)
+        return NULL;
+    struct _pa_stream *s = (struct _pa_stream *)calloc(1, sizeof(struct _pa_stream));
+    s->pcm = pcm;
+    return s;
+}
+
+// pa_stream_connect_playback(stream, device, buffer_attr, initial_bytes,
+// format, error_code): no audio here, the data flows through pa_stream_write.
+int shared_pa_stream_connect_playback(void *stream, const char *device, const void *buffer_attr, long long initial_bytes, int format, int *error_code)
+{
+    (void)stream;
+    (void)device;
+    (void)buffer_attr;
+    (void)initial_bytes;
+    (void)format;
+    (void)error_code;
+    return 0;
+}
+
+// pa_stream_write: 0 on success (not the frame count), -1 on error.
+int shared_pa_stream_write(void *stream, const void *data, unsigned long size, long long offset, int eol, void *writer)
+{
+    (void)offset;
+    (void)eol;
+    (void)writer;
+    struct _pa_stream *s = (struct _pa_stream *)stream;
+    if (!s || !s->pcm)
+        return -1;
+    int frame_size = s->pcm->spec.channels * 2; // S16
+    if (frame_size <= 0)
+        return -1;
+    return shared_snd_pcm_writei(s->pcm, data, size / frame_size) >= 0 ? 0 : -1;
+}
+
+int shared_pa_stream_drain(void *stream, long long usec, void *userdata)
+{
+    (void)usec;
+    (void)userdata;
+    struct _pa_stream *s = (struct _pa_stream *)stream;
+    if (s && s->pcm)
+        shared_snd_pcm_drain(s->pcm);
+    return 0;
+}
+
+int shared_pa_stream_get_state(void *stream)
+{
+    (void)stream;
+    return 2; // PA_STREAM_READY
+}
+
+int shared_pa_stream_disconnect(void *stream)
+{
+    (void)stream;
+    return 0;
+}
+
+unsigned long shared_pa_stream_writable_size(void *stream)
+{
+    (void)stream;
+    return 4096;
+}
+
+int shared_pa_stream_unref(void *stream)
+{
+    struct _pa_stream *s = (struct _pa_stream *)stream;
+    int r = s ? 1 : 0;
+    if (s && s->pcm)
+        shared_snd_pcm_close(s->pcm);
+    free(s);
+    return r;
+}
+
+void *shared_pa_simple_new(void *context, const char *name, int direction, void *device, const char *stream_name, void *ss, void *map, void *attr, long long *usec)
+{
+    (void)context;
+    (void)name;
+    (void)direction;
+    (void)device;
+    (void)stream_name;
+    (void)ss;
+    (void)map;
+    (void)attr;
+    (void)usec;
+    snd_pcm_t *pcm;
+    if (PaOpenStream(&pcm) != 0)
+        return NULL;
+    struct _pa_simple *s = (struct _pa_simple *)calloc(1, sizeof(struct _pa_simple));
+    s->pcm = pcm;
+    return s;
+}
+
+int shared_pa_simple_free(void *simple)
+{
+    struct _pa_simple *s = (struct _pa_simple *)simple;
+    int r = s ? 1 : 0;
+    if (s && s->pcm)
+        shared_snd_pcm_close(s->pcm);
+    free(s);
+    return r;
+}
+
+int shared_pa_operation_cancel(void *op)
+{
+    (void)op;
+    return 1;
+}
+
+int shared_pa_operation_get_state(void *op)
+{
+    (void)op;
+    // PA_OPERATION_DONE (1; 0 is RUNNING, 2 CANCELLED): the game polls
+    // until it sees it, and any other state would keep the wait open.
+    return 1;
+}
+
+int shared_pa_operation_unref(void *op)
+{
+    (void)op;
+    return 1;
+}

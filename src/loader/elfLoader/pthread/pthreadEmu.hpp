@@ -47,6 +47,10 @@ public:
     static int pthreadAttrGetdetachstate(const void* attr, int* detachstate);
     static int pthreadAttrSetstacksize(void* attr, size_t stacksize);
     static int pthreadAttrGetstacksize(const void* attr, size_t* stacksize);
+    // Default stack for threads created without one (pthread_setattr_default_np
+    // equivalent, which the CRT's own does not reach the emulated threads).
+    static void SetDefaultThreadStackSize(size_t size);
+    static size_t GetDefaultThreadStackSize();
 
     // --------------------------------------------------------
     // Mutex API

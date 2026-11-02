@@ -12,18 +12,26 @@
 //   cabinet: their reports are written empty (an IP conflict check reads
 //   arping.txt; the LAN start waits for ping-reports.txt to exist).
 
-#include <arpa/inet.h>
 #include <ctype.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#if !defined(_WIN32)
+#include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#endif
 
 #include "namcoEs1.h"
 #include "namcoN2.h"
@@ -35,6 +43,7 @@ static unsigned char address[4] = {127, 0, 0, 1}, mask[4] = {255, 0, 0, 0}, mac[
 
 // The host's first interface with an IPv4 address (not loopback). Caller
 // holds lock.
+#ifndef _WIN32
 static void initialize(void)
 {
     struct ifaddrs *list;
@@ -64,6 +73,44 @@ static void initialize(void)
     }
     freeifaddrs(list);
 }
+#else
+static void initialize(void)
+{
+    IP_ADAPTER_INFO *list;
+    ULONG size = 0;
+
+    if (initialized)
+        return;
+    initialized = 1;
+    if (GetAdaptersInfo(NULL, &size) != ERROR_BUFFER_OVERFLOW)
+        return;
+    list = (IP_ADAPTER_INFO *)malloc(size);
+    if (!list || GetAdaptersInfo(list, &size) != ERROR_SUCCESS)
+    {
+        free(list);
+        return;
+    }
+    for (IP_ADAPTER_INFO *a = list; a; a = a->Next)
+    {
+        // The addresses are dotted-decimal strings, not binary octets.
+        struct in_addr ip, m;
+
+        if (!a->IpAddressList.IpAddress.String[0])
+            continue;
+        ip.s_addr = inet_addr(a->IpAddressList.IpAddress.String);
+        m.s_addr = inet_addr(a->IpAddressList.IpMask.String);
+        const unsigned char *o = (const unsigned char *)&ip.s_addr;
+        if (ip.s_addr == INADDR_NONE || !o[0] || o[0] == 127)
+            continue;
+        memcpy(address, &ip.s_addr, 4);
+        memcpy(mask, &m.s_addr, 4);
+        memcpy(mac, a->Address, a->AddressLength < 6 ? a->AddressLength : 6);
+        log_info("Namco: eth0 is %s, %u.%u.%u.%u", a->AdapterName, address[0], address[1], address[2], address[3]);
+        break;
+    }
+    free(list);
+}
+#endif
 
 // The file a command's output goes to ("... > file"), or 0.
 static int redirectPath(const char *command, char *path, size_t size)
@@ -96,7 +143,7 @@ static int redirectPath(const char *command, char *path, size_t size)
 
 static void writeFile(const char *path, const char *text)
 {
-    FILE *f = fopen(path, "w");
+    FILE *f = fopen(path, "wb");
     if (!f)
     {
         log_warn("Namco: cannot write %s", path);

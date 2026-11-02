@@ -42,7 +42,9 @@
 // How far an absolute input (mouse, stick) moves before it takes the handle.
 #define TB_FOLLOW_MIN 16
 
+#ifdef __linux__
 extern Controllers controllers;
+#endif
 
 static volatile int axisMove = TB_AXIS_MID, axisTilt = TB_AXIS_MID;
 static int moveMapped, tiltMapped;
@@ -50,9 +52,7 @@ static int (*rioSampleInputOrig)(void);
 
 static uint64_t nowMs(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return rtNowMs();
 }
 
 static int clampAxis(int v)
@@ -206,8 +206,10 @@ static int rioAnalogRead(int *move, int *tilt, int *c, int *d)
 void rtTbInstall(const RtGame *game)
 {
     (void)game;
+#ifdef __linux__
     moveMapped = getConfig()->inputMode == 2 && evdevAxisController(&controllers, "ANALOGUE_1");
     tiltMapped = getConfig()->inputMode == 2 && evdevAxisController(&controllers, "ANALOGUE_3");
+#endif
     desktopGamepadEnable();
     desktopPointerMiddle(BUTTON_START);
     rioSampleInputOrig = rtTrampoline("RIO_SampleInput", 6);
