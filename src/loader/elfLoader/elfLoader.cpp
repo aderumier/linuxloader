@@ -382,6 +382,7 @@ bool ElfLoader::MapSegmentsToMemory()
         }
     }
     {
+        bool collected = false;
         for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
         {
             section *pSec = m_Elfio->sections[i];
@@ -390,8 +391,33 @@ bool ElfLoader::MapSegmentsToMemory()
                 void *ehFrameAddr = reinterpret_cast<void *>(pSec->get_address() + m_LoadBias);
                 s_PendingEhFrames.push_back(ehFrameAddr);
                 log_info("[EH] Collected .eh_frame at %p (size %llu) for %s\n", ehFrameAddr, (unsigned long long)pSec->get_size(), m_Path.c_str());
+                collected = true;
                 break;
             }
+        }
+        // Without section headers (the Raw Thrills dumps), .eh_frame is
+        // found as ld.so finds it: PT_GNU_EH_FRAME's .eh_frame_hdr holds its
+        // address (eh_frame_ptr, usually DW_EH_PE_pcrel | DW_EH_PE_sdata4).
+        // Without it, no C++ exception unwinds through the game's frames.
+        for (const auto &seg : m_Elfio->segments)
+        {
+            if (collected || seg->get_type() != 0x6474e550 /* PT_GNU_EH_FRAME */ || seg->get_memory_size() < 8)
+                continue;
+            const uint8_t *hdr = reinterpret_cast<const uint8_t *>(seg->get_virtual_address() + m_LoadBias);
+            int32_t value;
+            memcpy(&value, hdr + 4, 4);
+            uintptr_t ehFrame = 0;
+            if (hdr[0] == 1 && hdr[1] == 0x1b) // pcrel | sdata4
+                ehFrame = (uintptr_t)(hdr + 4) + value;
+            else if (hdr[0] == 1 && (hdr[1] == 0x03 || hdr[1] == 0x0b)) // absptr udata4 / sdata4
+                ehFrame = (uintptr_t)(uint32_t)value + ((m_Elfio->get_type() == ET_DYN) ? m_LoadBias : 0);
+            if (!ehFrame || !ImageAddressValid((uint32_t)ehFrame))
+            {
+                log_warn("[EH] PT_GNU_EH_FRAME of %s: unsupported eh_frame_ptr encoding %02x", m_Path.c_str(), hdr[1]);
+                continue;
+            }
+            s_PendingEhFrames.push_back(reinterpret_cast<void *>(ehFrame));
+            log_info("[EH] Collected .eh_frame at %p (from PT_GNU_EH_FRAME) for %s\n", (void *)ehFrame, m_Path.c_str());
         }
     }
 
@@ -434,6 +460,10 @@ bool ElfLoader::LoadDependencies()
         SymbolResolver::GetInstance().RegisterLibrary("libXi.so.6", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libGL.so.1", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libGLU.so.1", "INTERNAL");
+        // The Raw Thrills g5 games': librt's clocks are the libc bridge's,
+        // udev the cabinet hotplug stand-in (rtBridge.cpp).
+        SymbolResolver::GetInstance().RegisterLibrary("librt.so.1", "INTERNAL");
+        SymbolResolver::GetInstance().RegisterLibrary("libudev.so.1", "INTERNAL");
 
         // The Roxor games' (Tux Racer's) window, sound and scripts: the
         // Windows SDL (the compatibility layer over SDL2/SDL3, and the SDL
@@ -461,11 +491,13 @@ bool ElfLoader::LoadDependencies()
         SymbolResolver::GetInstance().RegisterLibrary("libposixtime.so.2.4", "INTERNAL");
     }
 
+    bool haveDynamic = false;
     for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
     {
         section *pSection = m_Elfio->sections[i];
         if (pSection->get_type() == SHT_DYNAMIC)
         {
+            haveDynamic = true;
             dynamic_section_accessor dynamic(*m_Elfio, pSection);
             Elf_Xword dyn_num = dynamic.get_entries_num();
             for (Elf_Xword j = 0; j < dyn_num; ++j)
@@ -483,7 +515,46 @@ bool ElfLoader::LoadDependencies()
             }
         }
     }
+    if (!haveDynamic)
+        LoadImageDependencies();
     return true;
+}
+
+// The DT_NEEDED entries of an ELF without section headers (the Raw Thrills
+// dumps: the envelope stripped them), read from the loaded PT_DYNAMIC as
+// ld.so does.
+void ElfLoader::LoadImageDependencies()
+{
+    if (m_Elfio->get_class() != ELFCLASS32)
+        return;
+    const Elf32_Dyn *dyn = (const Elf32_Dyn *)(uintptr_t)GetDynamicSectionAddress();
+    if (!dyn || !ImageAddressValid((uint32_t)(uintptr_t)dyn))
+        return;
+
+    uint32_t strtab = 0, strsz = 0;
+    for (const Elf32_Dyn *e = dyn; e - dyn < 256 && e->d_tag != DT_NULL; e++)
+    {
+        if (e->d_tag == DT_STRTAB)
+            strtab = e->d_un.d_val;
+        else if (e->d_tag == DT_STRSZ)
+            strsz = e->d_un.d_val;
+    }
+    // A dump's table holds the relocated address; a file's, the unbiased one.
+    if (strtab && !ImageAddressValid(strtab) && ImageAddressValid(strtab + m_LoadBias))
+        strtab += m_LoadBias;
+    if (!strtab || !ImageAddressValid(strtab))
+    {
+        log_warn("ELF has no readable dynamic string table: its DT_NEEDED libraries are not loaded");
+        return;
+    }
+    for (const Elf32_Dyn *e = dyn; e - dyn < 256 && e->d_tag != DT_NULL; e++)
+    {
+        if (e->d_tag != DT_NEEDED || (strsz && e->d_un.d_val >= strsz))
+            continue;
+        const char *name = (const char *)(uintptr_t)(strtab + e->d_un.d_val);
+        log_info("ELF needs library: %s", name);
+        SymbolResolver::GetInstance().LoadNeededLibrary(name);
+    }
 }
 
 #ifndef DT_RELRSZ
@@ -499,6 +570,94 @@ bool ElfLoader::LoadDependencies()
 #define R_386_GLOB_DAT  6
 #define R_386_JMP_SLOT  7
 #define R_386_RELATIVE  8
+
+// The relocations of an ELF without section headers (the Raw Thrills dumps),
+// from the loaded PT_DYNAMIC's DT_REL and DT_JMPREL tables, as ld.so reads
+// them. A dump's slots already hold the cabinet's resolved values, so only
+// the relocations that do not add to them are applied: the copies of the
+// libraries' objects (R_386_COPY: libstdc++'s type_info vtables, without
+// which no C++ exception is caught) and the GOT slots.
+void ElfLoader::ProcessImageRelocations()
+{
+    if (m_Elfio->get_class() != ELFCLASS32)
+        return;
+    const Elf32_Dyn *dyn = (const Elf32_Dyn *)(uintptr_t)GetDynamicSectionAddress();
+    if (!dyn || !ImageAddressValid((uint32_t)(uintptr_t)dyn))
+        return;
+
+    uint32_t rel = 0, relSize = 0, jmpRel = 0, jmpRelSize = 0, symtab = 0, strtab = 0;
+    for (const Elf32_Dyn *e = dyn; e - dyn < 256 && e->d_tag != DT_NULL; e++)
+    {
+        switch (e->d_tag)
+        {
+        case DT_REL: rel = e->d_un.d_ptr; break;
+        case DT_RELSZ: relSize = e->d_un.d_val; break;
+        case DT_JMPREL: jmpRel = e->d_un.d_ptr; break;
+        case DT_PLTRELSZ: jmpRelSize = e->d_un.d_val; break;
+        case DT_SYMTAB: symtab = e->d_un.d_ptr; break;
+        case DT_STRTAB: strtab = e->d_un.d_ptr; break;
+        }
+    }
+    // A dump's table holds the relocated addresses; a file's, the unbiased ones.
+    uint32_t *ptrs[] = {&rel, &jmpRel, &symtab, &strtab};
+    for (uint32_t *p : ptrs)
+        if (*p && !ImageAddressValid(*p) && ImageAddressValid(*p + m_LoadBias))
+            *p += m_LoadBias;
+    if (!symtab || !strtab || !ImageAddressValid(symtab) || !ImageAddressValid(strtab))
+    {
+        log_warn("ELF has no readable dynamic symbol table: its relocations are not applied");
+        return;
+    }
+
+    const Elf32_Sym *syms = (const Elf32_Sym *)(uintptr_t)symtab;
+    const char *strs = (const char *)(uintptr_t)strtab;
+    size_t applied = 0, skipped = 0;
+    struct
+    {
+        uint32_t table, size;
+    } tables[] = {{rel, relSize}, {jmpRel, jmpRelSize}};
+    for (const auto &t : tables)
+    {
+        if (!t.table || !ImageAddressValid(t.table))
+            continue;
+        const Elf32_Rel *r = (const Elf32_Rel *)(uintptr_t)t.table;
+        for (uint32_t i = 0; i < t.size / sizeof(Elf32_Rel); i++)
+        {
+            uint32_t type = ELF32_R_TYPE(r[i].r_info), symIdx = ELF32_R_SYM(r[i].r_info);
+            uint32_t *slot = (uint32_t *)(uintptr_t)(r[i].r_offset + m_LoadBias);
+            if (!symIdx || !ImageAddressValid((uint32_t)(uintptr_t)slot) ||
+                (type != R_386_COPY && type != R_386_GLOB_DAT && type != R_386_JMP_SLOT))
+            {
+                skipped++;
+                continue;
+            }
+            std::string name = strs + syms[symIdx].st_name;
+            if (type == R_386_COPY)
+            {
+                void *src = SymbolResolver::GetInstance().ResolveSymbolInSharedLibs(name);
+                if (src && src != slot && syms[symIdx].st_size)
+                {
+                    memcpy(slot, src, syms[symIdx].st_size);
+                    SymbolResolver::GetInstance().RegisterVTable(name, slot);
+                    log_info("Applied R_386_COPY for %s (%u bytes) from %p to %p", name.c_str(), syms[symIdx].st_size, src, slot);
+                    applied++;
+                }
+                else
+                    log_warn("R_386_COPY for %s: no source in the shared libraries", name.c_str());
+                continue;
+            }
+            std::string moduleName;
+            void *value = SymbolResolver::GetInstance().ResolveSymbol(name, &moduleName);
+            if (!value)
+                continue;
+            *slot = (uint32_t)(uintptr_t)value;
+            if (type == R_386_JMP_SLOT && !m_IsSharedObject)
+                SymbolResolver::GetInstance().RecordMainImport(name, slot);
+            applied++;
+        }
+    }
+    log_info("Applied %zu relocations from PT_DYNAMIC (%zu with addends left as dumped)", applied, skipped);
+}
 
 bool ElfLoader::ProcessRelocations()
 {
@@ -569,6 +728,13 @@ bool ElfLoader::ProcessRelocations()
         }
         log_info("Processed %zu bytes of DT_RELR packed relative relocations (%zu addresses)", (size_t)relrSz, relrPatchedAddrs.size());
     }
+
+    bool haveRelSections = false;
+    for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
+        if (m_Elfio->sections[i]->get_type() == SHT_REL || m_Elfio->sections[i]->get_type() == SHT_RELA)
+            haveRelSections = true;
+    if (!haveRelSections)
+        ProcessImageRelocations();
 
     for (Elf_Half i = 0; i < m_Elfio->sections.size(); ++i)
     {
@@ -896,10 +1062,19 @@ void ElfLoader::ReadImageDynsym() const
             break;
         }
     }
+    // A dump's .dynamic holds the relocated addresses (ld.so wrote them); a
+    // library file's, the unbiased ones.
+    if (m_DynsymTable && !ImageAddressValid(m_DynsymTable) && ImageAddressValid(m_DynsymTable + m_LoadBias))
+        m_DynsymTable += m_LoadBias;
+    if (m_DynsymStrings && !ImageAddressValid(m_DynsymStrings) && ImageAddressValid(m_DynsymStrings + m_LoadBias))
+        m_DynsymStrings += m_LoadBias;
+    if (hash && !ImageAddressValid((uint32_t)(uintptr_t)hash) && ImageAddressValid((uint32_t)(uintptr_t)hash + m_LoadBias))
+        hash = (const uint32_t *)((uintptr_t)hash + m_LoadBias);
     if (!m_DynsymTable || !m_DynsymStrings || !ImageAddressValid(m_DynsymTable) || !ImageAddressValid(m_DynsymStrings))
     {
         log_warn("symbol lookup: the image's .dynamic points at no usable symbol table (symtab=%08x strtab=%08x)",
                  (unsigned)m_DynsymTable, (unsigned)m_DynsymStrings);
+        m_DynsymTable = m_DynsymStrings = 0;
         return;
     }
     // The entry count: .hash's nchain (glibc's sysv layout). Without it the
@@ -970,17 +1145,17 @@ void *ElfLoader::FindExportedSymbol(const std::string &name) const
 
     // No section headers (a cabinet dump), or the table the sections point
     // to is unreadable: the same symbols, from the loaded image's .dynamic.
-    // Its entries are runtime addresses already (relocated, or a fixed-base
-    // dump): do not add the load bias again.
+    // A fixed-base dump's values are its runtime addresses; a shared
+    // object's take its load bias.
     ReadImageDynsym();
     if (m_DynsymTable)
     {
         const Elf32_Sym *s = FindImageDynsym(m_DynsymTable, m_DynsymStrings, m_DynsymStrsz, m_DynsymCount, name.c_str());
         if (s && s->st_value != 0 && s->st_shndx != 0)
         {
-            log_debug("FindExportedSymbol: '%s' found in the image's .dynamic at %p", name.c_str(),
-                      (void *)(uintptr_t)s->st_value);
-            return (void *)(uintptr_t)s->st_value;
+            uint32_t value = s->st_value + (m_Elfio->get_type() == ET_DYN ? m_LoadBias : 0);
+            log_debug("FindExportedSymbol: '%s' found in the image's .dynamic at %p", name.c_str(), (void *)(uintptr_t)value);
+            return (void *)(uintptr_t)value;
         }
     }
     return nullptr;
