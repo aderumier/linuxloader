@@ -298,7 +298,7 @@ namespace FileSystemBridge
             strncpy(aligned_ptr, tmp, len);
             aligned_ptr[len - 1] = '\0';
         }
-        _aligned_free(tmp);
+        free(tmp); // _getcwd's, the CRT malloc's
         return aligned_ptr;
     }
 } // namespace FileSystemBridge

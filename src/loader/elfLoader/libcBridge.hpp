@@ -21,6 +21,16 @@ extern "C" {
 #include <windows.h>
 #include <locale.h>
 
+// Linux i386's struct timespec (MinGW's has a 64-bit time_t: 16 bytes).
+#ifndef LINUX_TIMESPEC_DEFINED
+#define LINUX_TIMESPEC_DEFINED
+struct linux_timespec
+{
+    int32_t tv_sec;
+    int32_t tv_nsec;
+};
+#endif
+
 struct tm32
 {
     int tm_sec;
@@ -79,8 +89,8 @@ namespace LibcBridge
     int bridgeUtime(const char *filename, const struct linux_utimbuf *times);
     int bridgeUsleep(uint32_t microseconds);
     int bridgeSleep(uint32_t seconds);
-    int bridgeNanosleep(const struct timespec *req, struct timespec *rem);
-    int bridgeClockGettime(int clk_id, struct timespec *tp);
+    int bridgeNanosleep(const struct linux_timespec *req, struct linux_timespec *rem);
+    int bridgeClockGettime(int clk_id, struct linux_timespec *tp);
     time_t bridgeMktime(struct tm *tm);
     struct tm32 *bridgeGmtime_R(const time_t *timep, struct tm32 *result);
     size_t bridgeStrftime(char *s, size_t maxsize, const char *format, const struct tm *timeptr);

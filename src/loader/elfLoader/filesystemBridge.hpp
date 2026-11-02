@@ -102,11 +102,14 @@ struct linux_stat_ver3
     uint32_t __unused5;
 };
 
+#ifndef LINUX_TIMESPEC_DEFINED
+#define LINUX_TIMESPEC_DEFINED
 struct linux_timespec
 {
     int32_t tv_sec;
     int32_t tv_nsec;
 };
+#endif
 
 struct linux_stat64_safe
 {

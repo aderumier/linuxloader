@@ -887,7 +887,7 @@ namespace LibcBridge
         return 0;
     }
 
-    int bridgeNanosleep(const struct timespec *req, struct timespec *rem)
+    int bridgeNanosleep(const struct linux_timespec *req, struct linux_timespec *rem)
     {
         long long duration_ns = (long long)req->tv_sec * 1000000000LL + req->tv_nsec;
         if (duration_ns <= 0)
@@ -946,20 +946,39 @@ namespace LibcBridge
         return nullptr;
     }
 
-    int bridgeClockGettime(int clk_id, struct timespec *tp)
+    // CLOCK_REALTIME from the system time; the monotonic, boot-time and CPU
+    // time clocks (FMOD asks for CLOCK_MONOTONIC) from the performance
+    // counter.
+    int bridgeClockGettime(int clk_id, struct linux_timespec *tp)
     {
         log_trace("Intercepted clock_gettime");
-        if (clk_id == CLOCK_REALTIME)
+        if (!tp)
+            return -1;
+        if (clk_id == 0) // CLOCK_REALTIME
         {
             FILETIME ft;
             GetSystemTimeAsFileTime(&ft);
             unsigned __int64 t = (unsigned __int64)ft.dwHighDateTime << 32 | ft.dwLowDateTime;
             t -= 116444736000000000ULL;
             t /= 10;
-            tp->tv_sec = (long)(t / 1000000);
-            tp->tv_nsec = (long)(t % 1000000) * 1000;
+            tp->tv_sec = (int32_t)(t / 1000000);
+            tp->tv_nsec = (int32_t)(t % 1000000) * 1000;
             return 0;
         }
+        // MONOTONIC 1, PROCESS/THREAD_CPUTIME 2/3, MONOTONIC_RAW 4,
+        // MONOTONIC_COARSE 6, BOOTTIME 7.
+        if (clk_id >= 1 && clk_id <= 7 && clk_id != 5)
+        {
+            static LARGE_INTEGER freq;
+            LARGE_INTEGER now;
+            if (!freq.QuadPart)
+                QueryPerformanceFrequency(&freq);
+            QueryPerformanceCounter(&now);
+            tp->tv_sec = (int32_t)(now.QuadPart / freq.QuadPart);
+            tp->tv_nsec = (int32_t)((now.QuadPart % freq.QuadPart) * 1000000000LL / freq.QuadPart);
+            return 0;
+        }
+        errno = EINVAL;
         return -1;
     }
 
