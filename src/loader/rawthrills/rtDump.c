@@ -71,23 +71,27 @@ static void *rtOverride(const char *name)
 
 // The game's own dlsym (the envelope's): the resolver's, which finds the
 // same things the game's imports find.
+static void *rtGlxGetProcAddress(const char *name);
+static int isGlName(const char *name);
+static void *rtGlProcAddress(const char *name);
+
 void *gameDlsym(void *handle, const char *name)
 {
     (void)handle;
+    if (name && (!strcmp(name, "glXGetProcAddressARB") || !strcmp(name, "glXGetProcAddress")))
+        return (void *)rtGlxGetProcAddress;
+    if (name && isGlName(name))
+        return rtGlProcAddress(name); // as glXGetProcAddress's
     return bridgeResolveSymbol(name);
 }
 
 // ---------------------------------------------------------------------------
-// Lazy passthroughs for the ICD's extension entry points.
+// The ICD's entry points, for the GL imports without a loader passthrough.
 //
 // The ICD's wglGetProcAddress may not answer before a GL context exists,
-// so at import time these slots would stay 0 and the game's first call
-// would fault. The game gets these forwarders instead: on the first call
-// (the game then has a context) they fetch the entry point and forward,
-// and if the ICD truly has no such function they no-op, logged once.
-// The game calls them cdecl; the ICD's entry points are stdcall, so each
-// forwarder is the cdecl front onto a stdcall back (the callee's ret 4n
-// removes the pushed arguments).
+// so these are fetched on the first call (the game then has a context), and
+// a function the ICD truly lacks no-ops, logged once. The game calls them
+// cdecl, the ICD's entry points are stdcall: see glFront below.
 // ---------------------------------------------------------------------------
 
 static void *glWgl(const char *name)
@@ -99,7 +103,7 @@ static void *glWgl(const char *name)
 }
 
 // One warning per name, for the ICD entry points that stay unfetchable.
-static void glLazyMissing(const char *name)
+static void glFrontMissing(const char *name)
 {
     static const char *warned[64];
     int i;
@@ -115,313 +119,131 @@ static void glLazyMissing(const char *name)
     log_warn("Raw Thrills: ICD has no %s, the call does nothing", name);
 }
 
-// i386: enums and sizes are 32-bit, so the argument types below are plain
-// int/unsigned int/pointers (the GL headers' typedefs would be the same).
-static void __cdecl lazy_glGenerateMipmap(unsigned int target)
-{
-    static void (WINAPI *real)(unsigned int);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int))glWgl("glGenerateMipmap");
-    if (real)
-    {
-        real(target);
-        return;
-    }
-    glLazyMissing("glGenerateMipmap");
-}
-static void __cdecl lazy_glGetActiveUniformsiv(unsigned int program, unsigned int index, int count,
-                                               const unsigned int *pname, int *params)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, int, const unsigned int *, int *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, int, const unsigned int *, int *))glWgl("glGetActiveUniformsiv");
-    if (real)
-    {
-        real(program, index, count, pname, params);
-        return;
-    }
-    glLazyMissing("glGetActiveUniformsiv");
-}
-static void __cdecl lazy_glUniformBlockBinding(unsigned int program, unsigned int index, unsigned int binding)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, unsigned int);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, unsigned int))glWgl("glUniformBlockBinding");
-    if (real)
-    {
-        real(program, index, binding);
-        return;
-    }
-    glLazyMissing("glUniformBlockBinding");
-}
-static unsigned int __cdecl lazy_glGetUniformBlockIndex(unsigned int program, const char *name)
-{
-    static unsigned int (WINAPI *real)(unsigned int, const char *);
-    if (!real)
-        real = (unsigned int (WINAPI *)(unsigned int, const char *))glWgl("glGetUniformBlockIndex");
-    if (real)
-        return real(program, name);
-    glLazyMissing("glGetUniformBlockIndex");
-    return 0; // GL_NO_INDEX
-}
-static void __cdecl lazy_glProgramBinary(unsigned int program, unsigned int binaryformat, const void *binary, int length)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, const void *, int);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, const void *, int))glWgl("glProgramBinary");
-    if (real)
-    {
-        real(program, binaryformat, binary, length);
-        return;
-    }
-    glLazyMissing("glProgramBinary");
-}
-static void __cdecl lazy_glGetActiveUniformBlockiv(unsigned int program, unsigned int index, unsigned int pname, int *params)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, unsigned int, int *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, unsigned int, int *))glWgl("glGetActiveUniformBlockiv");
-    if (real)
-    {
-        real(program, index, pname, params);
-        return;
-    }
-    glLazyMissing("glGetActiveUniformBlockiv");
-}
-static void __cdecl lazy_glGetActiveAttrib(unsigned int program, unsigned int index, int bufsize, int *length, int *size,
-                                           unsigned int *type, char *name)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, int, int *, int *, unsigned int *, char *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, int, int *, int *, unsigned int *, char *))glWgl("glGetActiveAttrib");
-    if (real)
-    {
-        real(program, index, bufsize, length, size, type, name);
-        return;
-    }
-    glLazyMissing("glGetActiveAttrib");
-}
-static void __cdecl lazy_glRenderbufferStorageMultisample(unsigned int target, int samples, unsigned int internalformat,
-                                                          int width, int height)
-{
-    static void (WINAPI *real)(unsigned int, int, unsigned int, int, int);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, int, unsigned int, int, int))glWgl("glRenderbufferStorageMultisample");
-    if (real)
-    {
-        real(target, samples, internalformat, width, height);
-        return;
-    }
-    glLazyMissing("glRenderbufferStorageMultisample");
-}
-static void __cdecl lazy_glGetActiveUniformBlockName(unsigned int program, unsigned int index, int bufsize, int *length,
-                                                     char *name)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, int, int *, char *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, int, int *, char *))glWgl("glGetActiveUniformBlockName");
-    if (real)
-    {
-        real(program, index, bufsize, length, name);
-        return;
-    }
-    glLazyMissing("glGetActiveUniformBlockName");
-}
-static void __cdecl lazy_glBlitFramebuffer(int srcx0, int srcy0, int srcx1, int srcy1, int dstx0, int dsty0, int dstx1,
-                                           int dsty1, unsigned int mask, unsigned int filter)
-{
-    static void (WINAPI *real)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
-    if (!real)
-        real = (void (WINAPI *)(int, int, int, int, int, int, int, int, unsigned int, unsigned int))glWgl("glBlitFramebuffer");
-    if (real)
-    {
-        real(srcx0, srcy0, srcx1, srcy1, dstx0, dsty0, dstx1, dsty1, mask, filter);
-        return;
-    }
-    glLazyMissing("glBlitFramebuffer");
-}
-static void __cdecl lazy_glTexImage3D(unsigned int target, int level, int internalformat, int width, int height, int depth,
-                                      int border, unsigned int format, unsigned int type, const void *pixels)
-{
-    static void (WINAPI *real)(unsigned int, int, int, int, int, int, int, unsigned int, unsigned int, const void *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, int, int, int, int, int, int, unsigned int, unsigned int, const void *))glWgl("glTexImage3D");
-    if (real)
-    {
-        real(target, level, internalformat, width, height, depth, border, format, type, pixels);
-        return;
-    }
-    glLazyMissing("glTexImage3D");
-}
-static void __cdecl lazy_glGetRenderbufferParameteriv(unsigned int target, unsigned int pname, int *params)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, int *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, int *))glWgl("glGetRenderbufferParameteriv");
-    if (real)
-    {
-        real(target, pname, params);
-        return;
-    }
-    glLazyMissing("glGetRenderbufferParameteriv");
-}
-static void __cdecl lazy_glBindBufferBase(unsigned int target, unsigned int index)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int))glWgl("glBindBufferBase");
-    if (real)
-    {
-        real(target, index);
-        return;
-    }
-    glLazyMissing("glBindBufferBase");
-}
-static void __cdecl lazy_glBindFragDataLocation(unsigned int program, unsigned int color, const char *name)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, const char *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, const char *))glWgl("glBindFragDataLocation");
-    if (real)
-    {
-        real(program, color, name);
-        return;
-    }
-    glLazyMissing("glBindFragDataLocation");
-}
-static void __cdecl lazy_glGetActiveUniformName(unsigned int program, unsigned int index, int bufsize, int *length, char *name)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, int, int *, char *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, int, int *, char *))glWgl("glGetActiveUniformName");
-    if (real)
-    {
-        real(program, index, bufsize, length, name);
-        return;
-    }
-    glLazyMissing("glGetActiveUniformName");
-}
-static void __cdecl lazy_glProgramParameteri(unsigned int program, unsigned int pname, int value)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, int);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, int))glWgl("glProgramParameteri");
-    if (real)
-    {
-        real(program, pname, value);
-        return;
-    }
-    glLazyMissing("glProgramParameteri");
-}
-static void __cdecl lazy_glUniformMatrix3x4fv(unsigned int location, int count, int transpose, const float *value)
-{
-    static void (WINAPI *real)(unsigned int, int, int, const float *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, int, int, const float *))glWgl("glUniformMatrix3x4fv");
-    if (real)
-    {
-        real(location, count, transpose, value);
-        return;
-    }
-    glLazyMissing("glUniformMatrix3x4fv");
-}
-static void __cdecl lazy_glGetProgramBinary(unsigned int program, int bufsize, int *length, unsigned int *binaryformat,
-                                            void *binary)
-{
-    static void (WINAPI *real)(unsigned int, int, int *, unsigned int *, void *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, int, int *, unsigned int *, void *))glWgl("glGetProgramBinary");
-    if (real)
-    {
-        real(program, bufsize, length, binaryformat, binary);
-        return;
-    }
-    glLazyMissing("glGetProgramBinary");
-}
-static void __cdecl lazy_glBindAttribLocation(unsigned int program, unsigned int index, const char *name)
-{
-    static void (WINAPI *real)(unsigned int, unsigned int, const char *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, unsigned int, const char *))glWgl("glBindAttribLocation");
-    if (real)
-    {
-        real(program, index, name);
-        return;
-    }
-    glLazyMissing("glBindAttribLocation");
-}
-static void __cdecl lazy_glUniformMatrix4x3fv(unsigned int location, int count, int transpose, const float *value)
-{
-    static void (WINAPI *real)(unsigned int, int, int, const float *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, int, int, const float *))glWgl("glUniformMatrix4x3fv");
-    if (real)
-    {
-        real(location, count, transpose, value);
-        return;
-    }
-    glLazyMissing("glUniformMatrix4x3fv");
-}
-static void __cdecl lazy_glGetShaderSource(unsigned int shader, int bufsize, int *length, char *source)
-{
-    static void (WINAPI *real)(unsigned int, int, int *, char *);
-    if (!real)
-        real = (void (WINAPI *)(unsigned int, int, int *, char *))glWgl("glGetShaderSource");
-    if (real)
-    {
-        real(shader, bufsize, length, source);
-        return;
-    }
-    glLazyMissing("glGetShaderSource");
-}
+// Generic cdecl fronts onto the ICD's stdcall entry points, for the GL
+// imports without a typed adapter: on its first call (the game then has a
+// context) a front fetches its entry point, then each call copies the
+// caller's argument area and calls it; whatever the callee pops, the
+// caller's stack is restored. The argument count need not be known: GL
+// functions take at most 11 4-byte words (glTexSubImage3D), 16 are copied.
 
-static const struct
+typedef struct
 {
+    void *target;
     const char *name;
-    void *stub;
-} rtGlLazyTable[] = {
-    {"glGenerateMipmap", (void *)lazy_glGenerateMipmap},
-    {"glGetActiveUniformsiv", (void *)lazy_glGetActiveUniformsiv},
-    {"glUniformBlockBinding", (void *)lazy_glUniformBlockBinding},
-    {"glGetUniformBlockIndex", (void *)lazy_glGetUniformBlockIndex},
-    {"glProgramBinary", (void *)lazy_glProgramBinary},
-    {"glGetActiveUniformBlockiv", (void *)lazy_glGetActiveUniformBlockiv},
-    {"glGetActiveAttrib", (void *)lazy_glGetActiveAttrib},
-    {"glRenderbufferStorageMultisample", (void *)lazy_glRenderbufferStorageMultisample},
-    {"glGetActiveUniformBlockName", (void *)lazy_glGetActiveUniformBlockName},
-    {"glBlitFramebuffer", (void *)lazy_glBlitFramebuffer},
-    {"glTexImage3D", (void *)lazy_glTexImage3D},
-    {"glGetRenderbufferParameteriv", (void *)lazy_glGetRenderbufferParameteriv},
-    {"glBindBufferBase", (void *)lazy_glBindBufferBase},
-    {"glBindFragDataLocation", (void *)lazy_glBindFragDataLocation},
-    {"glGetActiveUniformName", (void *)lazy_glGetActiveUniformName},
-    {"glProgramParameteri", (void *)lazy_glProgramParameteri},
-    {"glUniformMatrix3x4fv", (void *)lazy_glUniformMatrix3x4fv},
-    {"glGetProgramBinary", (void *)lazy_glGetProgramBinary},
-    {"glBindAttribLocation", (void *)lazy_glBindAttribLocation},
-    {"glUniformMatrix4x3fv", (void *)lazy_glUniformMatrix4x3fv},
-    {"glGetShaderSource", (void *)lazy_glGetShaderSource},
-};
+} GlFront;
 
-static void *rtGlLazy(const char *name)
+static void glFrontNoop(void)
 {
-    for (size_t i = 0; i < sizeof(rtGlLazyTable) / sizeof(rtGlLazyTable[0]); i++)
-        if (!strcmp(name, rtGlLazyTable[i].name))
-            return rtGlLazyTable[i].stub;
-    return NULL;
+}
+
+// Called by a front, cdecl: its entry point, or a no-op when the ICD has none.
+static void *__cdecl glFrontResolve(GlFront *front)
+{
+    void *p = glWgl(front->name);
+    if (!p)
+        p = (void *)GetProcAddress(rtGlDll(), front->name);
+    if (!p)
+    {
+        glFrontMissing(front->name);
+        p = (void *)glFrontNoop;
+    }
+    front->target = p;
+    return p;
+}
+
+static void *glFront(const char *name)
+{
+    static uint8_t *page;
+    static size_t used;
+    enum
+    {
+        CODE_SIZE = 64
+    };
+    const size_t size = sizeof(GlFront) + CODE_SIZE;
+
+    if (!page || used + size > 65536)
+    {
+        page = (uint8_t *)VirtualAlloc(NULL, 65536, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        used = 0;
+        if (!page)
+            return NULL;
+    }
+    GlFront *front = (GlFront *)(page + used);
+    uint8_t *c = page + used + sizeof(GlFront), *code = c;
+    used += size;
+    front->target = NULL;
+    front->name = strdup(name);
+
+    uint32_t frontAddr = (uint32_t)(uintptr_t)front, targetAddr = (uint32_t)(uintptr_t)&front->target;
+    *c++ = 0x55;                         // push %ebp
+    *c++ = 0x89, *c++ = 0xe5;            // mov %esp,%ebp
+    *c++ = 0x56;                         // push %esi
+    *c++ = 0x57;                         // push %edi
+    *c++ = 0xa1;                         // mov target,%eax
+    memcpy(c, &targetAddr, 4), c += 4;
+    *c++ = 0x85, *c++ = 0xc0;            // test %eax,%eax
+    *c++ = 0x75, *c++ = 0x0d;            // jnz have (13 bytes on)
+    *c++ = 0x68;                         // push $front
+    memcpy(c, &frontAddr, 4), c += 4;
+    *c++ = 0xe8;                         // call glFrontResolve
+    int32_t rel = (int32_t)((uintptr_t)glFrontResolve - (uintptr_t)(c + 4));
+    memcpy(c, &rel, 4), c += 4;
+    *c++ = 0x83, *c++ = 0xc4, *c++ = 0x04; // add $4,%esp
+    // have:
+    *c++ = 0x83, *c++ = 0xec, *c++ = 0x40; // sub $64,%esp
+    *c++ = 0x8d, *c++ = 0x75, *c++ = 0x08; // lea 8(%ebp),%esi
+    *c++ = 0x89, *c++ = 0xe7;            // mov %esp,%edi
+    *c++ = 0xb9;                         // mov $16,%ecx
+    *c++ = 16, *c++ = 0, *c++ = 0, *c++ = 0;
+    *c++ = 0xfc;                         // cld
+    *c++ = 0xf3, *c++ = 0xa5;            // rep movsl
+    *c++ = 0xff, *c++ = 0xd0;            // call *%eax
+    *c++ = 0x8d, *c++ = 0x65, *c++ = 0xf8; // lea -8(%ebp),%esp
+    *c++ = 0x5f;                         // pop %edi
+    *c++ = 0x5e;                         // pop %esi
+    *c++ = 0x5d;                         // pop %ebp
+    *c++ = 0xc3;                         // ret
+    if (c - code > CODE_SIZE)
+        abort();
+    return code;
 }
 
 // The games call their GL imports cdecl, while the system opengl32's entry
 // points are stdcall: they get the loader's pure-GL passthroughs (the
-// __cdecl front onto glad, see glHooks.cpp), the real GL without the
-// Lindbergh wrappers, the raw entry points only when there is no adapter,
-// and the lazy forwarders for what the ICD hides before a context exists.
+// __cdecl front onto glad, see glHooks.cpp), and for the rest the generic
+// fronts above. Never a raw entry point.
 static void *rtGlImport(const char *name)
 {
     void *p = GLHooks_RealGlProc(name);
-    if (!p)
-        p = rtRealGlProc(name);
-    return p ? p : rtGlLazy(name);
+    return p ? p : glFront(name);
+}
+
+// The GL names of glXGetProcAddress, as the imports get them (the loader's
+// window bridges, the Lindbergh wrappers, are not for these games): the
+// frame hooks, then the cdecl fronts onto the ICD, NULL when the ICD has no
+// such function (the games test for the extensions that way).
+static int isGlName(const char *name)
+{
+    return name[0] == 'g' && name[1] == 'l' && name[2] != 'X' && !(name[2] == 'u' && name[3] == 't');
+}
+
+static void *rtGlProcAddress(const char *name)
+{
+    void *p;
+    if ((p = rtOverride(name)) || (p = GLHooks_RealGlProc(name)))
+        return p;
+    return rtRealGlProc(name) ? glFront(name) : NULL;
+}
+
+// The glX ones the loader's GLX bridge has (NULL for the others, as its
+// glXGetProcAddress answers).
+void *bridgeGlxGetProcAddress(const char *procName);
+
+static void *rtGlxGetProcAddress(const char *name)
+{
+    if (!name)
+        return NULL;
+    return isGlName(name) ? rtGlProcAddress(name) : bridgeGlxGetProcAddress(name);
 }
 
 static void *resolveImport(const char *name, const char *version)
@@ -429,6 +251,8 @@ static void *resolveImport(const char *name, const char *version)
     (void)version; // glibc versions, meaningless here
     if (!strcmp(name, "dlsym"))
         return (void *)gameDlsym;
+    if (!strcmp(name, "glXGetProcAddressARB") || !strcmp(name, "glXGetProcAddress"))
+        return (void *)rtGlxGetProcAddress;
     if (rtOverride(name))
         return rtOverride(name);
     // GL and GLU come from the ICD's passthroughs; glX and glut are the
