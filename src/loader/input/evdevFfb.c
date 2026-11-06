@@ -185,30 +185,115 @@ void evdevFfbDamper(float strength)
 #endif
 
 #ifndef __linux__
-// No evdev on Windows: the wheel force has nowhere to go yet (a DirectInput
-// or XInput rumble would be the port). The games' calls are no-ops.
+// No evdev on Windows: the constant force goes to the first wheel's SDL
+// haptics (the loader's own SDL 3, which the games' SDL 1.2 does not shadow
+// here). The other effects stay no-ops, no game of this port asks for them.
+
+#include <SDL3/SDL.h>
+
+#include "evdevFfb.h"
+#include "../log/log.h"
+
+// A force changing by less is not worth a USB transfer on the game's thread.
+#define FFB_MIN_CHANGE 164
+#define FFB_MIN_INTERVAL_MS 10
+// The wheel keeps a running force after the process is gone (Esc is an
+// ExitProcess, and a crash asks nothing either): it only lasts this long unless
+// renewed, so that it dies with the game.
+#define FFB_LENGTH_MS 500
+#define FFB_RENEW_MS 100
+
+static SDL_Haptic *haptic;
+static SDL_HapticEffect effect;
+static int effectId = -1;
+static Uint64 lastUpdate, lastRun;
 
 int evdevFfbOpen(const char *who)
 {
-    (void)who;
-    return -1;
+    int count = 0;
+    SDL_JoystickID *ids;
+
+    if (haptic)
+        return 1;
+    if (!SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC))
+    {
+        log_warn("%s: no SDL haptics: %s", who, SDL_GetError());
+        return 0;
+    }
+    ids = SDL_GetJoysticks(&count);
+    for (int i = 0; ids && i < count && !haptic; i++)
+    {
+        SDL_Joystick *joystick;
+
+        if (SDL_IsGamepad(ids[i]) || !(joystick = SDL_OpenJoystick(ids[i])))
+            continue;
+        if (SDL_IsJoystickHaptic(joystick) && (haptic = SDL_OpenHapticFromJoystick(joystick)) &&
+            !(SDL_GetHapticFeatures(haptic) & SDL_HAPTIC_CONSTANT))
+        {
+            SDL_CloseHaptic(haptic);
+            haptic = NULL;
+        }
+        if (haptic)
+            log_info("%s: force feedback on %s", who, SDL_GetJoystickName(joystick));
+        else
+            SDL_CloseJoystick(joystick);
+    }
+    SDL_free(ids);
+    return haptic != NULL;
 }
 
 int evdevFfbOpenPath(const char *who, const char *path)
 {
-    (void)who;
     (void)path;
-    return -1;
+    return evdevFfbOpen(who);
 }
 
 int evdevFfbWheel(void)
 {
-    return 0;
+    return haptic != NULL;
 }
 
 void evdevFfbConstant(float force)
 {
-    (void)force;
+    Uint64 now;
+    int level;
+
+    if (!haptic)
+        return;
+    force = force > 1.f ? 1.f : force < -1.f ? -1.f : force;
+    // A positive level pulls the wheel to the left (measured on a Logitech
+    // PRO Racing Wheel), as this function's force.
+    level = (int)(force * 32767);
+    now = SDL_GetTicks();
+    if (effectId < 0)
+    {
+        effect.type = SDL_HAPTIC_CONSTANT;
+        effect.constant.direction.type = SDL_HAPTIC_CARTESIAN;
+        effect.constant.direction.dir[0] = 1;
+        effect.constant.length = FFB_LENGTH_MS;
+        effect.constant.level = (Sint16)level;
+        effectId = SDL_CreateHapticEffect(haptic, &effect);
+        if (effectId < 0 || !SDL_RunHapticEffect(haptic, effectId, 1))
+        {
+            log_warn("Force feedback: no constant force: %s", SDL_GetError());
+            SDL_CloseHaptic(haptic);
+            haptic = NULL;
+        }
+        lastUpdate = lastRun = now;
+        return;
+    }
+    if (level != effect.constant.level && now - lastUpdate >= FFB_MIN_INTERVAL_MS &&
+        (level == 0 || SDL_abs(level - effect.constant.level) >= FFB_MIN_CHANGE))
+    {
+        effect.constant.level = (Sint16)level;
+        SDL_UpdateHapticEffect(haptic, effectId, &effect);
+        lastUpdate = now;
+    }
+    if (effect.constant.level != 0 && now - lastRun >= FFB_RENEW_MS)
+    {
+        SDL_RunHapticEffect(haptic, effectId, 1);
+        lastRun = now;
+    }
 }
 
 void evdevFfbSpring(float strength)
