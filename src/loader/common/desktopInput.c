@@ -653,11 +653,6 @@ int desktopGamepadAxis(int axis)
     return pad ? sdl.GetGamepadAxis(pad, (SDL_GamepadAxis)axis) : 0;
 }
 
-int desktopGamepadButton(int button)
-{
-    SDL_Gamepad *pad = currentGamepad(0);
-    return pad ? sdl.GetGamepadButton(pad, (SDL_GamepadButton)button) : 0;
-}
 
 int desktopPlayerGamepadAxis(int player, int axis)
 {
@@ -679,21 +674,23 @@ static int wheelAxis(SDL_Joystick *wheel, int axis, int inverted)
     return inverted ? -1 - value : value;
 }
 
-int desktopWheelAxes(int *steer, int *gas, int *brake)
+static int wheelReported;
+
+// The wheel, opened again (once a second) when there is none.
+static SDL_Joystick *currentWheel(void)
 {
     static SDL_Joystick *wheel;
     static time_t lastTry;
-    static int reported;
     time_t now = time(NULL);
 
     if (!gamepadEnabled)
-        return 0;
+        return NULL;
     SDL_UpdateJoysticks();
     if (wheel && !SDL_JoystickConnected(wheel))
     {
         SDL_CloseJoystick(wheel);
         wheel = NULL;
-        reported = 0;
+        wheelReported = 0;
     }
     if (!wheel && now != lastTry)
     {
@@ -705,17 +702,31 @@ int desktopWheelAxes(int *steer, int *gas, int *brake)
                 log_info("Desktop input: wheel %s connected", SDL_GetJoystickName(wheel));
         SDL_free(ids);
     }
+    return wheel;
+}
+
+int desktopWheelAxes(int *steer, int *gas, int *brake)
+{
+    SDL_Joystick *wheel = currentWheel();
+
     if (!wheel)
         return 0;
     const WheelMap *map = wheelMap();
     // The axes read 0 until the wheel's first report, and it reports on
     // changes only: half pressed pedals, for a game started with its feet off.
-    reported |= SDL_GetJoystickAxis(wheel, map->steerAxis) || SDL_GetJoystickAxis(wheel, map->gasAxis) ||
-                SDL_GetJoystickAxis(wheel, map->brakeAxis);
+    wheelReported |= SDL_GetJoystickAxis(wheel, map->steerAxis) || SDL_GetJoystickAxis(wheel, map->gasAxis) ||
+                     SDL_GetJoystickAxis(wheel, map->brakeAxis);
     *steer = wheelAxis(wheel, map->steerAxis, map->steerInverted);
-    *gas = reported ? wheelAxis(wheel, map->gasAxis, map->gasInverted) : -32768;
-    *brake = reported ? wheelAxis(wheel, map->brakeAxis, map->brakeInverted) : -32768;
+    *gas = wheelReported ? wheelAxis(wheel, map->gasAxis, map->gasInverted) : -32768;
+    *brake = wheelReported ? wheelAxis(wheel, map->brakeAxis, map->brakeInverted) : -32768;
     return 1;
+}
+
+// Whether the wheel holds a pad's button (wheel.ini): it is player 1's too.
+static int wheelButton(SDL_GamepadButton button)
+{
+    SDL_Joystick *wheel = currentWheel();
+    return wheel && wheelGamepadButtonHeld(wheel, button);
 }
 #else
 int desktopWheelAxes(int *steer, int *gas, int *brake)
@@ -725,9 +736,21 @@ int desktopWheelAxes(int *steer, int *gas, int *brake)
     (void)brake;
     return 0;
 }
+
+static int wheelButton(SDL_GamepadButton button)
+{
+    (void)button;
+    return 0;
+}
 #endif
 
-// The first SDL gamepad (desktopGamepadEnable): Start starts, Back is coin
+int desktopGamepadButton(int button)
+{
+    SDL_Gamepad *pad = currentGamepad(0);
+    return (pad && sdl.GetGamepadButton(pad, (SDL_GamepadButton)button)) || wheelButton((SDL_GamepadButton)button);
+}
+
+// The first SDL gamepad (desktopGamepadEnable), and a wheel's buttons: Start starts, Back is coin
 // 1, A (south) BUTTON_1, the d-pad the joystick, R3 the test switch, L3
 // service; its axes are read with desktopGamepadAxis.
 static void gamepadSwitches(JVSIO *io, int coin[2])
@@ -745,16 +768,15 @@ static void gamepadSwitches(JVSIO *io, int coin[2])
     for (int player = 0; player < (twoPlayerGamepads ? 2 : 1); player++)
     {
         SDL_Gamepad *pad = currentGamepad(player);
-        if (!pad)
-            continue;
+#define HELD(b) ((pad && sdl.GetGamepadButton(pad, (b))) || (player == 0 && wheelButton(b)))
         for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
-            if ((map[i].player == PLAYER_1 || (player == 0 && map[i].player == SYSTEM)) &&
-                sdl.GetGamepadButton(pad, map[i].button))
+            if ((map[i].player == PLAYER_1 || (player == 0 && map[i].player == SYSTEM)) && HELD(map[i].button))
                 io->state.inputSwitch[map[i].player == SYSTEM ? SYSTEM : PLAYER_1 + player] |= map[i].bit;
-        if (sdl.GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK))
+        if (HELD(SDL_GAMEPAD_BUTTON_BACK))
             coin[player] = 1;
-        if (twoPlayerGamepads && sdl.GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST))
+        if (twoPlayerGamepads && HELD(SDL_GAMEPAD_BUTTON_EAST))
             io->state.inputSwitch[PLAYER_1 + player] |= BUTTON_2;
+#undef HELD
     }
 }
 
