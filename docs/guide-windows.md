@@ -176,11 +176,11 @@ C:\path\to\linuxloader.exe -g C:\path\to\game -o C:\path\to\configfile\myconfig.
 
 Read the guide inside `docs` folder.
 
-## Wheels (Raw Thrills games)
+## Wheels
 
 Cruis'n Blast reads a wheel and its pedals directly, with force feedback, without any configuration if the wheel has the axes of a Logitech PRO Racing Wheel (steering 0, gas 3, brake 4).
 
-For any other wheel, close the game and run `setup-wheel.bat` once. It asks you to move each control, finds its axis and direction, and sends a weak force to find the force's direction. The result is kept for all the games in `%LOCALAPPDATA%\linuxloader\wheel.ini`:
+For any other wheel, or to use the wheel's buttons, close the game and run `setup-wheel.bat` once. It asks you to move each control, finds its axis and direction, sends a weak force to find the force's direction, then asks for a button for each of a standard pad's (A, B, X, Y, Start, Select, L1, R1, L2, R2, L3, R3 and the d-pad; Enter skips one). Each game gives them the meaning it gives a gamepad's. The result is kept for all the games in `%LOCALAPPDATA%\linuxloader\wheel.ini`:
 
 ```ini
 [Driving]
@@ -191,6 +191,13 @@ Brake = JOY0_AXIS_4_INVERTED
 [Config]
 Wheel_Setup = 1
 Wheel_FFB_Inverted = 0
+Wheel_SDL_Mapping = <written by setup-wheel>
+
+[Buttons]
+A = JOY0_BUTTON_0
+Start = JOY0_BUTTON_9
+Up = JOY0_HAT0_UP
+L2 = NONE
 ```
 
-You can also edit this file by hand: add `_INVERTED` to an axis to reverse it. Without this file, these games read the same keys from `controls.ini` in the game's folder.
+You can also edit this file by hand: add `_INVERTED` to an axis to reverse it. Without this file, the games read the axes from `controls.ini` in the game's folder. `Wheel_SDL_Mapping` is the same mapping for the games with the SDL input layer (the Lindbergh games), to which the wheel is then a gamepad: run `setup-wheel.bat` again rather than editing only `[Buttons]`.
