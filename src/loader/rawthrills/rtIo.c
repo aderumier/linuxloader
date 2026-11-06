@@ -305,22 +305,33 @@ static int keysDriveSlot(const RtIoInput *inputs, uint16_t slot)
     return 0;
 }
 
-// A driving game's controls on the gamepad (ioGamepad), over the desktop
-// state: the left stick steers (ANALOGUE_1), the triggers are the gas
-// (ANALOGUE_2) and the brake (ANALOGUE_3), X and Y BUTTON_2 and BUTTON_3.
+// A driving game's controls (ioGamepad), over the desktop state: a wheel's
+// steering (ANALOGUE_1) and pedals (the gas ANALOGUE_2, the brake ANALOGUE_3)
+// when there is one; else the gamepad's left stick and triggers. The gamepad's
+// X and Y are BUTTON_2 and BUTTON_3.
 #define GAMEPAD_STICK_DEADZONE 3000
 
 static void gamepadDriving(JVSIO *io)
 {
-    int steer = desktopGamepadAxis(SDL_GAMEPAD_AXIS_LEFTX);
+    int steer, gas, brake;
 
-    if (steer > -GAMEPAD_STICK_DEADZONE && steer < GAMEPAD_STICK_DEADZONE)
-        steer = 0;
-    io->state.analogueChannel[ANALOGUE_1] = (int)((steer + 32768) * (uint64_t)io->analogueMax / 65535);
-    io->state.analogueChannel[ANALOGUE_2] =
-        desktopGamepadAxis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * (uint64_t)io->analogueMax / 32767;
-    io->state.analogueChannel[ANALOGUE_3] =
-        desktopGamepadAxis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * (uint64_t)io->analogueMax / 32767;
+    if (desktopWheelAxes(&steer, &gas, &brake))
+    {
+        io->state.analogueChannel[ANALOGUE_1] = (int)((steer + 32768) * (uint64_t)io->analogueMax / 65535);
+        io->state.analogueChannel[ANALOGUE_2] = (int)((gas + 32768) * (uint64_t)io->analogueMax / 65535);
+        io->state.analogueChannel[ANALOGUE_3] = (int)((brake + 32768) * (uint64_t)io->analogueMax / 65535);
+    }
+    else
+    {
+        steer = desktopGamepadAxis(SDL_GAMEPAD_AXIS_LEFTX);
+        if (steer > -GAMEPAD_STICK_DEADZONE && steer < GAMEPAD_STICK_DEADZONE)
+            steer = 0;
+        io->state.analogueChannel[ANALOGUE_1] = (int)((steer + 32768) * (uint64_t)io->analogueMax / 65535);
+        io->state.analogueChannel[ANALOGUE_2] =
+            desktopGamepadAxis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * (uint64_t)io->analogueMax / 32767;
+        io->state.analogueChannel[ANALOGUE_3] =
+            desktopGamepadAxis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * (uint64_t)io->analogueMax / 32767;
+    }
     if (desktopGamepadButton(SDL_GAMEPAD_BUTTON_WEST))
         io->state.inputSwitch[PLAYER_1] |= BUTTON_2;
     if (desktopGamepadButton(SDL_GAMEPAD_BUTTON_NORTH))

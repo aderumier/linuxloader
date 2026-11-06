@@ -40,6 +40,9 @@ int desktopGamepadButton(int button);
 // desktopGamepadEnableTwoPlayers only).
 int desktopPlayerGamepadAxis(int player, int axis);
 int desktopPlayerGamepadButton(int player, int button);
+// The first SDL wheel's axes (Windows; desktopGamepadEnable): steering
+// -32768..32767, the pedals -32768 (released) to 32767. 0 without one.
+int desktopWheelAxes(int *steer, int *gas, int *brake);
 
 // A game's own keys besides the JVS ones (X keysyms, up to 32), and those
 // held: bit n for keysyms[n].
