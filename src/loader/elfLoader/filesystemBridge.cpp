@@ -322,8 +322,15 @@ extern "C"
     {
         log_debug("opendir(\"%s\")", name);
 
+        // Every failure sets errno, as libc's: libusb-0.1 returns -errno from
+        // its bus scan, and a 0 there is a success that walks its uninitialized
+        // list (Cruis'n Blast overwrote its return address on a PC with no
+        // /dev/bus/usb).
         if(strncmp(name, "/proc", 5) == 0)
+        {
+            errno = ENOENT;
             return 0;
+        }
 
         char pathBuf[MAX_PATH];
         name = gameRedirectPath(name, pathBuf, sizeof(pathBuf));
@@ -344,7 +351,10 @@ extern "C"
 
         std::string searchPath = winPath;
         if (searchPath.empty())
+        {
+            errno = ENOENT;
             return NULL;
+        }
 
         if (searchPath.back() == '/' || searchPath.back() == '\\')
         {
@@ -362,6 +372,7 @@ extern "C"
         if (dir->hFind == INVALID_HANDLE_VALUE)
         {
             delete dir;
+            errno = ENOENT;
             return NULL;
         }
 
