@@ -653,6 +653,60 @@ int desktopGamepadButton(int button)
     return pad ? sdl.GetGamepadButton(pad, (SDL_GamepadButton)button) : 0;
 }
 
+#ifdef _WIN32
+// The axes of a Logitech PRO Racing Wheel, read with SDL's DirectInput.
+#define WHEEL_AXIS_STEER 0
+#define WHEEL_AXIS_GAS 3
+#define WHEEL_AXIS_BRAKE 4
+
+int desktopWheelAxes(int *steer, int *gas, int *brake)
+{
+    static SDL_Joystick *wheel;
+    static time_t lastTry;
+    static int reported;
+    time_t now = time(NULL);
+
+    if (!gamepadEnabled)
+        return 0;
+    SDL_UpdateJoysticks();
+    if (wheel && !SDL_JoystickConnected(wheel))
+    {
+        SDL_CloseJoystick(wheel);
+        wheel = NULL;
+        reported = 0;
+    }
+    if (!wheel && now != lastTry)
+    {
+        int count = 0;
+        SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+        lastTry = now;
+        for (int i = 0; ids && i < count && !wheel; i++)
+            if (SDL_GetJoystickTypeForID(ids[i]) == SDL_JOYSTICK_TYPE_WHEEL && (wheel = SDL_OpenJoystick(ids[i])))
+                log_info("Desktop input: wheel %s connected", SDL_GetJoystickName(wheel));
+        SDL_free(ids);
+    }
+    if (!wheel)
+        return 0;
+    *steer = SDL_GetJoystickAxis(wheel, WHEEL_AXIS_STEER);
+    *gas = SDL_GetJoystickAxis(wheel, WHEEL_AXIS_GAS);
+    *brake = SDL_GetJoystickAxis(wheel, WHEEL_AXIS_BRAKE);
+    // The axes read 0 until the wheel's first report, and it reports on
+    // changes only: half pressed pedals, for a game started with its feet off.
+    reported |= *steer || *gas || *brake;
+    if (!reported)
+        *gas = *brake = -32768;
+    return 1;
+}
+#else
+int desktopWheelAxes(int *steer, int *gas, int *brake)
+{
+    (void)steer;
+    (void)gas;
+    (void)brake;
+    return 0;
+}
+#endif
+
 // The first SDL gamepad (desktopGamepadEnable): Start starts, Back is coin
 // 1, A (south) BUTTON_1, the d-pad the joystick, R3 the test switch, L3
 // service; its axes are read with desktopGamepadAxis.
