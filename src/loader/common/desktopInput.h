@@ -40,6 +40,9 @@ int desktopGamepadButton(int button);
 // desktopGamepadEnableTwoPlayers only).
 int desktopPlayerGamepadAxis(int player, int axis);
 int desktopPlayerGamepadButton(int player, int button);
+// The first SDL wheel's axes (Windows; desktopGamepadEnable): steering
+// -32768..32767, the pedals -32768 (released) to 32767. 0 without one.
+int desktopWheelAxes(int *steer, int *gas, int *brake);
 
 // Esc or Alt+F4 quits, while the game's window has the focus.
 void desktopStartQuitWatch(void);
