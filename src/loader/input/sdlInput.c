@@ -20,6 +20,7 @@
 #include "../hardware/lindbergh/forceFeedback.h"
 #include "../config/iniParser.h"
 #include "sdlInput.h"
+#include "wheelSetup.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../log/log.h"
 #include "../hardware/lindbergh/touchScreen.h"
@@ -223,6 +224,10 @@ int initSdlInput(const char *controlsPath)
         else
             printf("Failed to load %s as a controller database.\n", myBasename(envDbPath));
     }
+
+    // A wheel set up by --setup-wheel is a gamepad here.
+    if (!evdevMode)
+        wheelAddGamepadMapping();
 
     gameType = getConfig()->gameType;
     jvsAnalogueMaxValue = (1 << getJVSIO()->capabilities.analogueInBits) - 1;
