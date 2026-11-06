@@ -204,6 +204,7 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
         src/loader/common/desktopInput.c
         src/loader/common/importHook.c
         src/loader/common/ossDsp.c
+        src/loader/common/webcamWin.c
         src/loader/graphics/shaderWork/*.c
         src/loader/elfLoader/*.cpp
         src/loader/elfLoader/pthread/*.cpp
