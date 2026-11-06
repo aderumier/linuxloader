@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
+#include <x86intrin.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 260
@@ -103,6 +104,38 @@ static const char *join(char *buf, size_t size, const char *dir, const char *res
     return buf;
 }
 
+#ifdef _WIN32
+// Windows has no /proc/cpuinfo, and the games dereference what they parse out
+// of it: a file of our own, in the game's tmp/, with the "cpu MHz" their clocks
+// divide TSC ticks by, the TSC's own rate over 100 ms.
+static const char *procCpuinfo(char *buf, size_t size)
+{
+    static int written;
+
+    join(buf, size, gameDir, "/tmp/proc-cpuinfo");
+    if (!written)
+    {
+        LARGE_INTEGER freq, start, end;
+        unsigned long long ticks = __rdtsc();
+        FILE *f;
+
+        QueryPerformanceFrequency(&freq);
+        QueryPerformanceCounter(&start);
+        Sleep(100);
+        QueryPerformanceCounter(&end);
+        ticks = __rdtsc() - ticks;
+        if ((f = fopen(buf, "wb")))
+        {
+            fprintf(f, "processor\t: 0\ncpu MHz\t\t: %.3f\n",
+                    ticks / ((double)(end.QuadPart - start.QuadPart) / freq.QuadPart) / 1e6);
+            fclose(f);
+        }
+        written = 1;
+    }
+    return buf;
+}
+#endif
+
 const char *rtRedirectPath(const char *path, char *buf, size_t size)
 {
     const RtGame *g = rtCurrentGame();
@@ -110,6 +143,11 @@ const char *rtRedirectPath(const char *path, char *buf, size_t size)
 
     if (!g || !path || !gameDir[0])
         return path;
+
+#ifdef _WIN32
+    if (!strcmp(path, "/proc/cpuinfo"))
+        return procCpuinfo(buf, size);
+#endif
 
     // The scripts ship encrypted for the dongle; the dump comes with a
     // decrypted copy, which is what the game must load.
