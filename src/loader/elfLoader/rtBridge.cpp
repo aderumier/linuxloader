@@ -36,6 +36,8 @@
 #include "libcBridge.hpp"
 #include "symbolResolver.hpp"
 #include "rtBridge.hpp"
+#include "memoryManager.hpp"
+#include "wide32.hpp"
 
 #include "../log/log.h"
 #include "../rawthrills/rawthrills.h"
@@ -115,23 +117,23 @@ namespace RtBridge
         return n;
     }
 
-    int bridgeFwprintfChk(FILE *f, int flag, const wchar_t *fmt, ...)
+    int bridgeFwprintfChk(FILE *f, int flag, const uint32_t *fmt, ...)
     {
         (void)flag;
         va_list args;
         va_start(args, fmt);
-        int n = vfwprintf(f, fmt, args);
+        int n = wide32Vfprintf(f, fmt, args);
         va_end(args);
         return n;
     }
 
-    int bridgeSwprintfChk(wchar_t *s, size_t n, int flag, size_t destlen, const wchar_t *fmt, ...)
+    int bridgeSwprintfChk(uint32_t *s, size_t n, int flag, size_t destlen, const uint32_t *fmt, ...)
     {
         (void)flag;
         (void)destlen;
         va_list args;
         va_start(args, fmt);
-        int r = vswprintf(s, n, fmt, args);
+        int r = wide32Vsnprintf(s, n, fmt, args);
         va_end(args);
         return r;
     }
@@ -177,10 +179,13 @@ namespace RtBridge
         return strcat(dst, src);
     }
 
-    wchar_t *bridgeWcscpyChk(wchar_t *dst, const wchar_t *src, size_t destlen)
+    uint32_t *bridgeWcscpyChk(uint32_t *dst, const uint32_t *src, size_t destlen)
     {
         (void)destlen;
-        return wcscpy(dst, src);
+        uint32_t *d = dst;
+        while ((*d++ = *src++))
+            ;
+        return dst;
     }
 
     char *bridgeStrncpyChk(char *dst, size_t n, const char *src, size_t dstsz)
@@ -445,11 +450,11 @@ namespace RtBridge
         return fsetpos(stream, pos);
     }
 
-    int bridgeFwprintf(FILE *stream, const wchar_t *fmt, ...)
+    int bridgeFwprintf(FILE *stream, const uint32_t *fmt, ...)
     {
         va_list args;
         va_start(args, fmt);
-        int n = vfwprintf(stream, fmt, args);
+        int n = wide32Vfprintf(stream, fmt, args);
         va_end(args);
         return n;
     }
@@ -611,20 +616,20 @@ namespace RtBridge
         return strtoull(s, end, base);
     }
 
-    int bridgeSwprintf(wchar_t *s, size_t n, const wchar_t *fmt, ...)
+    int bridgeSwprintf(uint32_t *s, size_t n, const uint32_t *fmt, ...)
     {
         va_list args;
         va_start(args, fmt);
-        int r = vswprintf(s, n, fmt, args);
+        int r = wide32Vsnprintf(s, n, fmt, args);
         va_end(args);
         return r;
     }
 
-    int bridgeSwscanf(const wchar_t *s, const wchar_t *fmt, ...)
+    int bridgeSwscanf(const uint32_t *s, const uint32_t *fmt, ...)
     {
         va_list args;
         va_start(args, fmt);
-        int r = vswscanf(s, fmt, args);
+        int r = wide32Vsscanf(s, fmt, args);
         va_end(args);
         return r;
     }
@@ -704,39 +709,46 @@ namespace RtBridge
         return n;
     }
 
-    int bridgeWcscasecmp(const wchar_t *a, const wchar_t *b)
+    int bridgeWcscasecmp(const uint32_t *a, const uint32_t *b)
     {
-        return _wcsicmp(a, b);
+        return wide32Casecmp(a, b);
     }
 
-    wchar_t *bridgeWcscat(wchar_t *dst, const wchar_t *src)
+    uint32_t *bridgeWcscat(uint32_t *dst, const uint32_t *src)
     {
-        return wcscat(dst, src);
+        return wide32Cat(dst, src);
     }
 
-    wchar_t *bridgeWcsdup(const wchar_t *s)
+    uint32_t *bridgeWcsdup(const uint32_t *s)
     {
-        return _wcsdup(s);
+        size_t size = sizeof(uint32_t);
+        for (const uint32_t *p = s; *p; p++)
+            size += sizeof(uint32_t);
+        // The game frees it: its allocator's.
+        uint32_t *copy = (uint32_t *)MemoryManager::customMalloc(size);
+        if (copy)
+            memcpy(copy, s, size);
+        return copy;
     }
 
-    wchar_t *bridgeWcsncat(wchar_t *dst, const wchar_t *src, size_t n)
+    uint32_t *bridgeWcsncat(uint32_t *dst, const uint32_t *src, size_t n)
     {
-        return wcsncat(dst, src, n);
+        return wide32Ncat(dst, src, n);
     }
 
-    wchar_t *bridgeWcstok(wchar_t *s, const wchar_t *delims, wchar_t **save)
+    uint32_t *bridgeWcstok(uint32_t *s, const uint32_t *delims, uint32_t **save)
     {
-        return wcstok(s, delims, save);
+        return wide32Tok(s, delims, save);
     }
 
-    long long bridgeWcstoll(const wchar_t *s, wchar_t **end, int base)
+    long long bridgeWcstoll(const uint32_t *s, uint32_t **end, int base)
     {
-        return _wcstoi64(s, end, base);
+        return wide32Toll(s, end, base);
     }
 
-    unsigned long long bridgeWcstoull(const wchar_t *s, wchar_t **end, int base)
+    unsigned long long bridgeWcstoull(const uint32_t *s, uint32_t **end, int base)
     {
-        return _wcstoui64(s, end, base);
+        return wide32Toull(s, end, base);
     }
 
     // ------------------------------------------------------------------
@@ -1437,9 +1449,9 @@ namespace RtBridge
         return iswalpha(wc);
     }
 
-    unsigned long bridgeWcstoul(const wchar_t *s, wchar_t **end_ptr, int base)
+    unsigned long bridgeWcstoul(const uint32_t *s, uint32_t **end_ptr, int base)
     {
-        return wcstoul(s, end_ptr, base);
+        return (unsigned long)wide32Toull(s, end_ptr, base);
     }
 
     void bridgeTzset(void)
@@ -1464,12 +1476,11 @@ namespace RtBridge
         return fpclassify(x);
     }
 
-    int bridgeIsoc99Swscanf(const wchar_t *format, ...)
+    int bridgeIsoc99Swscanf(const uint32_t *s, const uint32_t *format, ...)
     {
         va_list ap;
-        int result;
         va_start(ap, format);
-        result = vfwscanf(stdin, format, ap);
+        int result = wide32Vsscanf(s, format, ap);
         va_end(ap);
         return result;
     }
@@ -1483,16 +1494,16 @@ namespace RtBridge
     }
 
     // glibc's __wcscat_chk: (dest, src, destlen).
-    wchar_t *bridgeWcscatChk(wchar_t *dest, const wchar_t *src, size_t destlen)
+    uint32_t *bridgeWcscatChk(uint32_t *dest, const uint32_t *src, size_t destlen)
     {
         (void)destlen;
-        return wcscat(dest, src);
+        return wide32Cat(dest, src);
     }
 
-    wchar_t *bridgeWcsncatChk(wchar_t *dest, size_t n, const wchar_t *src, size_t l)
+    uint32_t *bridgeWcsncatChk(uint32_t *dest, const uint32_t *src, size_t n, size_t destlen)
     {
-        (void)n;
-        return wcsncat(dest, src, l);
+        (void)destlen;
+        return wide32Ncat(dest, src, n);
     }
 
     void *bridgeMemsetChk(void *dest, int c, size_t n, size_t dstlen)
