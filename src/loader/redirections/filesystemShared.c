@@ -33,6 +33,9 @@
 #include "../common/webcam.h"
 #include "../globalvr/gvr.h"
 #endif
+#ifdef _WIN32
+#include "../common/webcam.h"
+#endif
 #if defined(__linux__) || defined(_WIN32)
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
@@ -271,6 +274,8 @@ int sharedOpen(const char *pathname, int flags, ...)
         return namcoEs1KickbackOpen(_open);
     if (pathname && namcoN2KickbackIsPath(pathname))
         return namcoN2KickbackOpen(_open);
+    if (pathname && webcamIsPath(pathname))
+        return webcamOpen(pathname, flags, mode, (int (*)(const char *, int, ...))_open);
 #endif
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
@@ -766,6 +771,7 @@ int sharedClose(int fd)
     if (teamplayMjIsFd(fd))
         teamplayMjClose();
 #ifdef _WIN32
+    webcamClose(fd);
     if (namcoEs1JvsIsFd(fd))
         namcoEs1JvsClose();
     if (namcoEs1KickbackIsFd(fd))
@@ -1110,6 +1116,8 @@ int sharedIoctl(int fd, unsigned long int request, ...)
         return 0;
 #endif
 #ifdef _WIN32
+    if (webcamIsFd(fd))
+        return webcamIoctl(fd, request, argp);
     if (namcoEs1JvsIsFd(fd))
         return namcoEs1JvsIoctl(request, argp);
     if (namcoEs1KickbackIsFd(fd))
