@@ -175,3 +175,22 @@ C:\path\to\linuxloader.exe -g C:\path\to\game -o C:\path\to\configfile\myconfig.
 ## ID4 and ID5 Card Support
 
 Read the guide inside `docs` folder.
+
+## Wheels (Raw Thrills games)
+
+Cruis'n Blast reads a wheel and its pedals directly, with force feedback, without any configuration if the wheel has the axes of a Logitech PRO Racing Wheel (steering 0, gas 3, brake 4).
+
+For any other wheel, close the game and run `setup-wheel.bat` once. It asks you to move each control, finds its axis and direction, and sends a weak force to find the force's direction. The result is kept for all the games in `%LOCALAPPDATA%\linuxloader\wheel.ini`:
+
+```ini
+[Driving]
+Steer = JOY0_AXIS_0
+Gas = JOY0_AXIS_3
+Brake = JOY0_AXIS_4_INVERTED
+
+[Config]
+Wheel_Setup = 1
+Wheel_FFB_Inverted = 0
+```
+
+You can also edit this file by hand: add `_INVERTED` to an axis to reverse it. Without this file, these games read the same keys from `controls.ini` in the game's folder.
