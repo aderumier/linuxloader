@@ -34,6 +34,8 @@ void desktopGamepadEnableTwoPlayers(void);
 // Also read WASD as player 2's joystick, alongside player 1's arrows.
 void desktopKeyboardEnableTwoPlayers(void);
 int desktopGamepadAxis(int axis);
+// Whether the first gamepad holds a button (an SDL_GamepadButton).
+int desktopGamepadButton(int button);
 
 // Esc or Alt+F4 quits, while the game's window has the focus.
 void desktopStartQuitWatch(void);

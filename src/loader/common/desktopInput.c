@@ -631,6 +631,12 @@ int desktopGamepadAxis(int axis)
     return pad ? sdl.GetGamepadAxis(pad, (SDL_GamepadAxis)axis) : 0;
 }
 
+int desktopGamepadButton(int button)
+{
+    SDL_Gamepad *pad = currentGamepad(0);
+    return pad && sdl.GetGamepadButton(pad, (SDL_GamepadButton)button);
+}
+
 // The first SDL gamepad (desktopGamepadEnable): Start starts, Back is coin
 // 1, A (south) BUTTON_1, the d-pad the joystick, R3 the test switch, L3
 // service; its axes are read with desktopGamepadAxis.

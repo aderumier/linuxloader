@@ -1548,6 +1548,7 @@ static const RtGame rtGames[] = {
         .ioLoopPrologue = 7,
         .extraMaps = cbExtraMaps,
         .ioInputs = cbIoInputs,
+        .ioGamepad = 1,
         .wheelSetSymbol = "Wheel_Set",
         .wheelInRace = CB_WHEEL_IN_RACE,
         .wheelMenuForce = CB_WHEEL_MENU_FORCE,
