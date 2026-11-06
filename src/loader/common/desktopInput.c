@@ -24,6 +24,9 @@
 #endif
 
 #include "desktopInput.h"
+#ifdef _WIN32
+#include "../input/wheelSetup.h"
+#endif
 #include "../graphics/frameScale.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../log/log.h"
@@ -585,6 +588,9 @@ void desktopGamepadEnable(void)
         return;
     }
     gamepadEnabled = 1;
+#ifdef _WIN32
+    wheelMap(); // While the current directory is the game's.
+#endif
 }
 
 void desktopGamepadEnableTwoPlayers(void)
@@ -638,10 +644,12 @@ int desktopGamepadButton(int button)
 }
 
 #ifdef _WIN32
-// The axes of a Logitech PRO Racing Wheel, read with SDL's DirectInput.
-#define WHEEL_AXIS_STEER 0
-#define WHEEL_AXIS_GAS 3
-#define WHEEL_AXIS_BRAKE 4
+// An axis as controls.ini says: inverted, -32768 and 32767 swap.
+static int wheelAxis(SDL_Joystick *wheel, int axis, int inverted)
+{
+    int value = SDL_GetJoystickAxis(wheel, axis);
+    return inverted ? -1 - value : value;
+}
 
 int desktopWheelAxes(int *steer, int *gas, int *brake)
 {
@@ -665,20 +673,20 @@ int desktopWheelAxes(int *steer, int *gas, int *brake)
         SDL_JoystickID *ids = SDL_GetJoysticks(&count);
         lastTry = now;
         for (int i = 0; ids && i < count && !wheel; i++)
-            if (SDL_GetJoystickTypeForID(ids[i]) == SDL_JOYSTICK_TYPE_WHEEL && (wheel = SDL_OpenJoystick(ids[i])))
+            if (wheelIsJoystick(ids[i]) && (wheel = SDL_OpenJoystick(ids[i])))
                 log_info("Desktop input: wheel %s connected", SDL_GetJoystickName(wheel));
         SDL_free(ids);
     }
     if (!wheel)
         return 0;
-    *steer = SDL_GetJoystickAxis(wheel, WHEEL_AXIS_STEER);
-    *gas = SDL_GetJoystickAxis(wheel, WHEEL_AXIS_GAS);
-    *brake = SDL_GetJoystickAxis(wheel, WHEEL_AXIS_BRAKE);
+    const WheelMap *map = wheelMap();
     // The axes read 0 until the wheel's first report, and it reports on
     // changes only: half pressed pedals, for a game started with its feet off.
-    reported |= *steer || *gas || *brake;
-    if (!reported)
-        *gas = *brake = -32768;
+    reported |= SDL_GetJoystickAxis(wheel, map->steerAxis) || SDL_GetJoystickAxis(wheel, map->gasAxis) ||
+                SDL_GetJoystickAxis(wheel, map->brakeAxis);
+    *steer = wheelAxis(wheel, map->steerAxis, map->steerInverted);
+    *gas = reported ? wheelAxis(wheel, map->gasAxis, map->gasInverted) : -32768;
+    *brake = reported ? wheelAxis(wheel, map->brakeAxis, map->brakeInverted) : -32768;
     return 1;
 }
 #else
