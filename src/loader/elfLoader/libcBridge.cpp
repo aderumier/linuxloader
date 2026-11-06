@@ -2,6 +2,7 @@
 #include "../redirections/filesystemShared.h"
 #include "memoryManager.hpp"
 #include "libcBridge.hpp"
+#include "../common/webcam.h"
 #include "../redirections/libcShared.h"
 #include "../log/log.h"
 #include "gccBridge.hpp"
@@ -1883,6 +1884,13 @@ namespace LibcBridge
         log_trace("Intercepted mmap: addr=%p, len=%zu, prot=%d, flags=%d, fd=%d, offset=%lld", addr, length, prot, flags, fd,
                   (long long)offset);
 
+        // A webcam's buffer: already mapped.
+        if (!(flags & L_MAP_ANONYMOUS) && webcamIsFd(fd))
+        {
+            void *mapped = webcamMmap(fd, (unsigned int)offset);
+            return mapped ? mapped : L_MAP_FAILED;
+        }
+
         if (flags & L_MAP_ANONYMOUS)
         {
             DWORD winProt = PAGE_READWRITE;
@@ -1909,6 +1917,9 @@ namespace LibcBridge
     int bridgeMunmap(void *addr, size_t length)
     {
         log_trace("Intercepted munmap: addr=%p, len=%zu", addr, length);
+        // It stays the webcam's until the device is closed.
+        if (webcamIsMapped(addr))
+            return 0;
         if (VirtualFree(addr, 0, MEM_RELEASE))
         {
             return 0;
