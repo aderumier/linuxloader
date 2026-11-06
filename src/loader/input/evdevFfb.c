@@ -192,6 +192,7 @@ void evdevFfbDamper(float strength)
 #include <SDL3/SDL.h>
 
 #include "evdevFfb.h"
+#include "wheelSetup.h"
 #include "../log/log.h"
 
 // A force changing by less is not worth a USB transfer on the game's thread.
@@ -220,6 +221,7 @@ int evdevFfbOpen(const char *who)
         log_warn("%s: no SDL haptics: %s", who, SDL_GetError());
         return 0;
     }
+    wheelMap(); // While the current directory is the game's.
     ids = SDL_GetJoysticks(&count);
     for (int i = 0; ids && i < count && !haptic; i++)
     {
@@ -262,8 +264,10 @@ void evdevFfbConstant(float force)
         return;
     force = force > 1.f ? 1.f : force < -1.f ? -1.f : force;
     // A positive level pulls the wheel to the left (measured on a Logitech
-    // PRO Racing Wheel), as this function's force.
+    // PRO Racing Wheel), as this function's force; --setup-wheel measures others.
     level = (int)(force * 32767);
+    if (wheelMap()->ffbInverted)
+        level = -level;
     now = SDL_GetTicks();
     if (effectId < 0)
     {

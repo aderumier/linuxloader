@@ -31,6 +31,7 @@
 #include "config/configIni.h"
 #include "input/evdevInput.h"
 #include "input/controlIniGen.h"
+#include "input/wheelSetup.h"
 #include "input/sdlInput.h"
 #include "log/log.h"
 #include "mainShared.h"
@@ -511,6 +512,7 @@ void printUsage(char *programName)
     printf("  --list-controllers | -l  Lists available controllers and inputs for EVDEV.\n");
 #endif
     printf("  --list-guids       | -lg Lists available SDL controllers GUIDs.\n");
+    printf("  --setup-wheel            Finds a wheel's axes and force direction, for all the games.\n");
     printf("  --version          | -v  Displays the version of the loader and team's names\n");
     printf("  --help             | -h  Displays this usage text\n");
     printf("  --config           | -c  Specifies configuration ini file path\n");
@@ -839,6 +841,12 @@ int parseArgs(int argc, char *argv[], char *command, char *originalDir, char *ga
     if (argc > 1 && (strcmp(argv[1], "--list-guids") == 0 || strcmp(argv[1], "-lg") == 0))
     {
         listSdlControllers();
+        return PARSE_ARGS_HELP;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--setup-wheel") == 0)
+    {
+        wheelSetupRun();
         return PARSE_ARGS_HELP;
     }
 
