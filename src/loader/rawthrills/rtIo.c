@@ -11,6 +11,7 @@
 //    that state is fed each frame to the engine's I/O slots, where the
 //    cabinet board's inputs arrive.
 
+#include <SDL3/SDL_gamepad.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -304,12 +305,39 @@ static int keysDriveSlot(const RtIoInput *inputs, uint16_t slot)
     return 0;
 }
 
+// A driving game's controls on the gamepad (ioGamepad), over the desktop
+// state: the left stick steers (ANALOGUE_1), the triggers are the gas
+// (ANALOGUE_2) and the brake (ANALOGUE_3), X and Y BUTTON_2 and BUTTON_3.
+#define GAMEPAD_STICK_DEADZONE 3000
+
+static void gamepadDriving(JVSIO *io)
+{
+    int steer = desktopGamepadAxis(SDL_GAMEPAD_AXIS_LEFTX);
+
+    if (steer > -GAMEPAD_STICK_DEADZONE && steer < GAMEPAD_STICK_DEADZONE)
+        steer = 0;
+    io->state.analogueChannel[ANALOGUE_1] = (int)((steer + 32768) * (uint64_t)io->analogueMax / 65535);
+    io->state.analogueChannel[ANALOGUE_2] =
+        desktopGamepadAxis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * (uint64_t)io->analogueMax / 32767;
+    io->state.analogueChannel[ANALOGUE_3] =
+        desktopGamepadAxis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * (uint64_t)io->analogueMax / 32767;
+    if (desktopGamepadButton(SDL_GAMEPAD_BUTTON_WEST))
+        io->state.inputSwitch[PLAYER_1] |= BUTTON_2;
+    if (desktopGamepadButton(SDL_GAMEPAD_BUTTON_NORTH))
+        io->state.inputSwitch[PLAYER_1] |= BUTTON_3;
+}
+
 // Runs as one of the engine's I/O backends, once per frame inside InputLoop.
 static int ioLoopHook(int dt)
 {
     static int rangesSet;
     const RtIoInput *inputs = currentGame->ioInputs;
     JVSIO *io = ioFromDesktop ? desktopInputState() : getJVSIO();
+    int gamepad = ioFromDesktop && currentGame->ioGamepad;
+    // The gamepad's range over the game's saved wheel calibration.
+    int rawRange = gamepad ? 2 : currentGame->ioRawRange;
+    if (gamepad)
+        gamepadDriving(io);
     // With evdev input, the desktop keys of ioDesktop games still work (the
     // operator's test and service keys on a gun-only setup).
     int desktopToo = !ioFromDesktop && currentGame->ioDesktop;
@@ -344,7 +372,7 @@ static int ioLoopHook(int dt)
             if (ioFromDesktop && keysDriveSlot(inputs, in->io))
                 continue;
             int value = io->state.analogueChannel[in->source];
-            if (currentGame->ioRawRange && (!rangesSet || currentGame->ioRawRange == 2))
+            if (rawRange && (!rangesSet || rawRange == 2))
                 ioSetInputRawRange(in->io, 0, io->analogueMax);
             ioAnalogSet(in->io, in->type == RT_IO_ANALOG ? value : io->analogueMax - value);
             continue;
@@ -560,6 +588,8 @@ static void installEvdevInput(const RtGame *game)
     rtDetour(ioLoopSymbol, ioLoopHook);
     evdevInput = getConfig()->inputMode == 2;
     ioFromDesktop = !evdevInput;
+    if (ioFromDesktop && game->ioGamepad)
+        desktopGamepadEnable();
     if (game->irGunActiveSymbol &&
         (rtDetour(game->irGunActiveSymbol, irGunActive) != 0 || rtDetour(game->irGunRawSymbols[0], irGunRaw) != 0 ||
          rtDetour(game->irGunRawSymbols[1], irGunRaw) != 0 || rtDetour(game->irGunButtonSymbol, irGunButton) != 0))
@@ -799,6 +829,16 @@ static void installRioInput(const RtGame *game)
 
 // ---------------------------------------------------------------------------
 
+// Whether the engine's I/O slots are the loader's to feed.
+static int feedsIoSlots(const RtGame *game)
+{
+#ifdef _WIN32
+    if (game->ioGamepad)
+        return 1;
+#endif
+    return getConfig()->inputMode == 2 || game->ioDesktop;
+}
+
 void rtInstallInput(const RtGame *game)
 {
     if (game->rioSwitches)
@@ -817,7 +857,7 @@ void rtInstallInput(const RtGame *game)
         // The evdev input decides which maps are dropped and added: set up
         // first, the maps are registered when main runs.
         currentGame = game;
-        if (getConfig()->inputMode == 2 || game->ioDesktop)
+        if (feedsIoSlots(game))
             installEvdevInput(game);
         inputAddMapOrig = rtTrampoline("InputAddMap", game->inputAddMapPrologue);
         inputAddMap = inputAddMapOrig;
@@ -832,7 +872,7 @@ void rtInstallInput(const RtGame *game)
     if (!game->gameInputMapsPrologue)
     {
         currentGame = game;
-        if (getConfig()->inputMode == 2 || game->ioDesktop)
+        if (feedsIoSlots(game))
             installEvdevInput(game);
         return;
     }
@@ -848,6 +888,6 @@ void rtInstallInput(const RtGame *game)
         return;
     }
     rtDetour(gameInputMapsSymbol, gameInputMaps);
-    if (getConfig()->inputMode == 2 || game->ioDesktop)
+    if (feedsIoSlots(game))
         installEvdevInput(game);
 }

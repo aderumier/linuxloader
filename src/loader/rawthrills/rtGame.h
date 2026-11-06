@@ -232,6 +232,9 @@ typedef struct RtGame
     // Feed ioInputs outside evdev mode too, from the desktop (mouse on P1's
     // gun, keys on the buttons, see rtIo.c): games without a developer map.
     int ioDesktop;
+    // On Windows, which has no evdev: feed ioInputs from the desktop keys and
+    // the first SDL gamepad (a driving game: see rtIo.c), not the mouse.
+    int ioGamepad;
     // IR tracked guns (the cmgr camera manager): without the camera the
     // guns are inactive, and the tracking backend flags their slots
     // offscreen every frame. Answered from the loader's gun input instead
