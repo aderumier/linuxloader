@@ -201,3 +201,7 @@ L2 = NONE
 ```
 
 You can also edit this file by hand: add `_INVERTED` to an axis to reverse it. Without this file, the games read the axes from `controls.ini` in the game's folder. `Wheel_SDL_Mapping` is the same mapping for the games with the SDL input layer (the Lindbergh games), to which the wheel is then a gamepad: run `setup-wheel.bat` again rather than editing only `[Buttons]`.
+
+## Webcams (Raw Thrills games)
+
+Cruis'n Blast's player photos use the first webcam Windows sees (through SDL), with no configuration; the game also runs without one. Windows' "Let desktop apps access your camera" setting must be on. The test menu's camera settings (brightness...) have no effect.
