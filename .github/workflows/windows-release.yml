@@ -1,0 +1,68 @@
+name: 🪟 Windows Release
+
+# A tag push (v*) builds linuxloader-win32.zip and publishes it as that
+# tag's release; a manual run only builds it (artifact, no release).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    name: "Build and Release"
+    runs-on: ubuntu-latest
+    # Arch's mingw-w64-gcc follows upstream GCC, as the desktop toolchain the
+    # port is tested with does (Ubuntu's GCC 13 is older).
+    container: archlinux:latest
+    timeout-minutes: 60
+    steps:
+    - name: Install Packages
+      run: pacman -Syu --noconfirm --needed git cmake make zip mingw-w64-gcc
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Version from Tag
+      if: startsWith(github.ref, 'refs/tags/v')
+      shell: bash
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))? ]]; then
+          sed -i "s/\(#define MAJOR_VERSION \).*/\1${BASH_REMATCH[1]}/" src/loader/version.h
+          sed -i "s/\(#define MINOR_VERSION \).*/\1${BASH_REMATCH[2]}/" src/loader/version.h
+          sed -i "s/\(#define UPDATE_VERSION \).*/\1${BASH_REMATCH[4]:-0}/" src/loader/version.h
+        fi
+        cat src/loader/version.h
+
+    - name: Compile Build for Windows
+      shell: bash
+      run: |
+        cmake -S . -B build-win32 -DCMAKE_TOOLCHAIN_FILE=mingw32.cmake
+        cmake --build build-win32 --parallel $(nproc)
+
+    - name: Package
+      shell: bash
+      run: |
+        mkdir win-release
+        cp build-win32/linuxloader.exe win-release/
+        cp -r libs/win32/ll-deps win-release/
+        cp scripts/windows/setup-wheel.bat win-release/
+        cd win-release
+        zip -r ../linuxloader-win32.zip .
+
+    - name: Upload linuxloader-win32.zip artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: "windows-build"
+        path: "linuxloader-win32.zip"
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: linuxloader-win32.zip
+        generate_release_notes: true
