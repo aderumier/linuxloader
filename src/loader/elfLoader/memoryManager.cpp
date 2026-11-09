@@ -235,6 +235,17 @@ size_t MemoryManager::customStrxfrm(char *dest, const char *src, size_t n)
     return strxfrm(dest, src, n);
 }
 
+// Zeroed, as glibc's fresh pages almost always are: the games read fields
+// they never set, and the CRT's reused blocks hold old data (Cruis'n Blast's
+// rain drawn corrupted, white lines or race scenes drawn all white).
+static void *zeroedAlloc(size_t size, size_t alignment)
+{
+    void *ptr = _aligned_malloc(size, alignment);
+    if (ptr)
+        memset(ptr, 0, size);
+    return ptr;
+}
+
 void *MemoryManager::customMalloc(size_t size)
 {
 #ifdef _WIN32
@@ -252,7 +263,7 @@ void *MemoryManager::customMalloc(size_t size)
         }
     }
 #endif
-    return _aligned_malloc(size, 16);
+    return zeroedAlloc(size, 16);
 }
 
 struct mallinfo MemoryManager::customMallinfo(void)
@@ -309,7 +320,7 @@ void *MemoryManager::customRealloc(void *ptr, size_t size)
 
 void *MemoryManager::customMemalign(size_t alignment, size_t size)
 {
-    return _aligned_malloc(size, alignment);
+    return zeroedAlloc(size, alignment);
 } 
 
 int MemoryManager::customPosixMemalign(void **ptr, size_t alignment, size_t size)
@@ -319,7 +330,7 @@ int MemoryManager::customPosixMemalign(void **ptr, size_t alignment, size_t size
         return EINVAL;
     }
 
-    *ptr = _aligned_malloc(size, alignment);
+    *ptr = zeroedAlloc(size, alignment);
     return *ptr ? 0 : ENOMEM;
 }
 
