@@ -287,11 +287,21 @@ namespace NetworkBridge
 extern "C" SOCKET bridgeSocket(int af, int type, int protocol)
 {
     log_info(">>> socket called: af=%d, type=%d, protocol=%d", af, type, protocol);
+    // Linux's type flags, which Winsock refuses (Big Buck HD Wild's
+    // NetworkInit failed on SOCK_DGRAM | SOCK_NONBLOCK).
+    const int linuxSockNonblock = 0x800, linuxSockCloexec = 0x80000;
+    int nonblock = type & linuxSockNonblock;
+    type &= ~(linuxSockNonblock | linuxSockCloexec);
     SOCKET s = socket(af, type, protocol);
     if (s == INVALID_SOCKET)
     {
         errno = mapWSAErrorToErrno(WSAGetLastError());
         return (SOCKET)-1;
+    }
+    if (nonblock)
+    {
+        u_long on = 1;
+        ioctlsocket(s, FIONBIO, &on);
     }
     log_info(">>> socket EXIT: returning %lld", (long long)s);
     return s;
