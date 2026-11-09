@@ -1210,10 +1210,11 @@ extern "C" void __attribute__((cdecl)) wrap_glDrawBuffer(GLenum mode)
         glad_glDrawBuffer(mode);
 }
 
-extern "C" void __attribute__((cdecl)) wrap_glCheckFramebufferStatusEXT(GLenum target)
+extern "C" GLenum __attribute__((cdecl)) wrap_glCheckFramebufferStatusEXT(GLenum target)
 {
     if (glad_glCheckFramebufferStatusEXT)
-        glad_glCheckFramebufferStatusEXT(target);
+        return glad_glCheckFramebufferStatusEXT(target);
+    return (GLenum)0;
 }
 
 extern "C" void __attribute__((cdecl)) wrap_glGenBuffersARB(GLsizei n, GLuint *buffers)
