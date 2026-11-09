@@ -121,17 +121,44 @@ static int haspWrite(uint32_t handle, uint32_t fileId, uint32_t offset, uint32_t
     return HASP_STATUS_OK;
 }
 
+#ifdef _WIN32
+void *bridgeResolveSymbol(const char *symbolName);
+
+// The game's malloc and free: a game without hasp_free in its symbols frees
+// the session info itself, and the CRT's blocks are not its heap's
+// (MemoryManager's aligned ones).
+static void *gameAlloc(size_t size)
+{
+    static void *(*gameMalloc)(size_t);
+    if (!gameMalloc)
+        *(void **)&gameMalloc = bridgeResolveSymbol("malloc");
+    return gameMalloc(size);
+}
+
+static void gameFree(void *p)
+{
+    static void (*freeFn)(void *);
+    if (!freeFn)
+        *(void **)&freeFn = bridgeResolveSymbol("free");
+    freeFn(p);
+}
+#else
+#define gameAlloc malloc
+#define gameFree free
+#endif
+
 static int haspGetSessionInfo(uint32_t handle, const char *format, char **info)
 {
     (void)handle;
     (void)format;
-    *info = strdup(HASP_SESSION_INFO);
+    if ((*info = gameAlloc(sizeof(HASP_SESSION_INFO))))
+        memcpy(*info, HASP_SESSION_INFO, sizeof(HASP_SESSION_INFO));
     return HASP_STATUS_OK;
 }
 
 static int haspFree(void *info)
 {
-    free(info);
+    gameFree(info);
     return HASP_STATUS_OK;
 }
 
