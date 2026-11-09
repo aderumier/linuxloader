@@ -65,6 +65,66 @@ namespace RtBridge
     // as for the game's own file calls (see rawthrills.c). The others'
     // (the Roxor games') keep the libc bridge's.
 
+    // sha1sum "file" (The Walking Dead's boot file test), which Windows
+    // lacks: its output, "<40 hex digits>  file", from CryptoAPI's SHA-1 in
+    // a temporary file read as the pipe. NULL if the file cannot be hashed.
+    static FILE *sha1sumOutput(const char *cmd)
+    {
+        typedef BOOL(WINAPI * AcquireFn)(HCRYPTPROV *, LPCSTR, LPCSTR, DWORD, DWORD);
+        typedef BOOL(WINAPI * CreateFn)(HCRYPTPROV, ALG_ID, HCRYPTKEY, DWORD, HCRYPTHASH *);
+        typedef BOOL(WINAPI * DataFn)(HCRYPTHASH, const BYTE *, DWORD, DWORD);
+        typedef BOOL(WINAPI * ParamFn)(HCRYPTHASH, DWORD, BYTE *, DWORD *, DWORD);
+        typedef BOOL(WINAPI * DestroyFn)(HCRYPTHASH);
+        typedef BOOL(WINAPI * ReleaseFn)(HCRYPTPROV, DWORD);
+        HMODULE advapi = LoadLibraryA("advapi32.dll");
+        AcquireFn acquire = (AcquireFn)GetProcAddress(advapi, "CryptAcquireContextA");
+        CreateFn create = (CreateFn)GetProcAddress(advapi, "CryptCreateHash");
+        DataFn data = (DataFn)GetProcAddress(advapi, "CryptHashData");
+        ParamFn param = (ParamFn)GetProcAddress(advapi, "CryptGetHashParam");
+        DestroyFn destroy = (DestroyFn)GetProcAddress(advapi, "CryptDestroyHash");
+        ReleaseFn release = (ReleaseFn)GetProcAddress(advapi, "CryptReleaseContext");
+        char path[MAX_PATH];
+        const char *p = cmd + 8;
+        size_t n = 0;
+
+        while (*p == ' ')
+            p++;
+        char end = *p == '"' ? *p++ : ' ';
+        while (*p && *p != end && n + 1 < sizeof(path))
+            path[n++] = *p++;
+        path[n] = 0;
+        if (!acquire || !create || !data || !param || !destroy || !release)
+            return NULL;
+
+        FILE *in = fopen(path, "rb");
+        if (!in)
+            return NULL;
+        HCRYPTPROV prov = 0;
+        HCRYPTHASH hash = 0;
+        BYTE digest[20];
+        DWORD len = sizeof(digest);
+        int ok = acquire(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT) &&
+                 create(prov, CALG_SHA1, 0, 0, &hash);
+        static BYTE chunk[1 << 16];
+        size_t got;
+        while (ok && (got = fread(chunk, 1, sizeof(chunk), in)) > 0)
+            ok = data(hash, chunk, (DWORD)got, 0);
+        ok = ok && param(hash, HP_HASHVAL, digest, &len, 0);
+        fclose(in);
+        if (hash)
+            destroy(hash);
+        if (prov)
+            release(prov, 0);
+        FILE *out = ok ? tmpfile() : NULL;
+        if (!out)
+            return NULL;
+        for (DWORD i = 0; i < len; i++)
+            fprintf(out, "%02x", digest[i]);
+        fprintf(out, "  %s\n", path);
+        rewind(out);
+        return out;
+    }
+
     FILE *bridgeRtPopen(const char *command, const char *type)
     {
         if (!isRawThrillsGame())
@@ -72,6 +132,12 @@ namespace RtBridge
         char buf[4096];
         const char *cmd = rtRedirectCommand(command, buf, sizeof(buf));
         log_info("Intercepted popen: %s %s", cmd, type);
+        if (!strncmp(cmd, "sha1sum ", 8) && type[0] == 'r')
+        {
+            FILE *out = sha1sumOutput(cmd);
+            if (out)
+                return out;
+        }
         return popen(cmd, type);
     }
 
