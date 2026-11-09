@@ -170,7 +170,9 @@ namespace FileSystemBridge
     FILE *bridgeFdopen(int fd, const char *mode)
     {
         log_trace("Intercepted fdopen");
-        return fdopen(fd, mode);
+        // Binary, as on Linux (filesystemShared.c).
+        char modeBuf[16];
+        return fdopen(fd, binaryMode(mode, modeBuf, sizeof(modeBuf)));
     }
 
     int bridgeSetvbuf(FILE *stream, char *buf, int mode, size_t size)
