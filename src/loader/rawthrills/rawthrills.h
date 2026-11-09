@@ -96,6 +96,10 @@ void rtSdlGlSwapWindow(void (*real)(void *), void *window);
 void rtGlxSwapBuffers(void *display, unsigned long drawable);
 void *rtRealDlsym(void *handle, const char *name);
 void rtInstallVideo(const RtGame *game);
+// Windows, staticSdl games: the game's SDL 1.2 video sent to SDL.dll
+// (rtSdl.c), and the SDL.dll function one of them now goes to.
+void rtInstallStaticSdl(const RtGame *game);
+void *rtStaticSdlTarget(const char *name);
 
 #ifdef __cplusplus
 }
