@@ -606,11 +606,6 @@ namespace RtBridge
             *cos = (float)c;
     }
 
-    void bridgeSrandom(unsigned seed)
-    {
-        srand(seed);
-    }
-
     unsigned long long bridgeStrtoull(const char *s, char **end, int base)
     {
         return strtoull(s, end, base);
@@ -2315,7 +2310,6 @@ namespace RtBridge
         MAP("lrint", bridgeLrint);
         MAP("sincos", bridgeSincos);
         MAP("sincosf", bridgeSincosf);
-        MAP("srandom", bridgeSrandom);
         MAP("setmntent", bridgeSetmntent);
         MAP("setutent", bridgeSetutent);
         MAP("sigdelset", bridgeSigdelset);
