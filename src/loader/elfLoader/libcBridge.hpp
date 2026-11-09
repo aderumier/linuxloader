@@ -186,6 +186,9 @@ namespace LibcBridge
     int bridgeSigemptyset(void *set);
     int bridgeSigaction(int signum, const struct linux_sigaction *act, struct linux_sigaction *oldact);
     int bridgeNice(int inc);
+    void *bridgeSdlLoadObject(const char *sofile);
+    void *bridgeSdlLoadFunction(void *handle, const char *name);
+    void bridgeSdlUnloadObject(void *handle);
 
     // Wide char memory and string functions
     int bridgeWmemcmp(const uint32_t *s1, const uint32_t *s2, size_t n);

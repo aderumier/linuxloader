@@ -676,6 +676,18 @@ void bridgeLoadNeededLibrary(const char *filename)
     SymbolResolver::GetInstance().RunAllInits();
 }
 
+int bridgeLoadNativeLibrary(const char *filename)
+{
+    const char *slash = strrchr(filename, '/');
+    bridgeLoadNeededLibrary(filename);
+    return SymbolResolver::GetInstance().IsNativeLoaded(slash ? slash + 1 : filename);
+}
+
+bool SymbolResolver::IsNativeLoaded(const std::string &fileName)
+{
+    return std::find(m_LoadedNativeNames.begin(), m_LoadedNativeNames.end(), fileName) != m_LoadedNativeNames.end();
+}
+
 void *bridgeGetLoadedLibrary(const char *dllName)
 {
     return SymbolResolver::GetInstance().GetLoadedLibrary(dllName);
