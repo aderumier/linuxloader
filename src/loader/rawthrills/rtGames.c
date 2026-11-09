@@ -389,8 +389,27 @@ static const RtSymbol twdSymbols[] = {
     {"umc_check_connection", 0x081cb73b},
     {"umc_device_status", 0x081cb78f},
     {"umc_read_report", 0x081cb7ef},
-    // Linked-in SDL 1.2.
+    // Linked-in SDL 1.2, a build without frame pointers: the rest of the
+    // entry points sent to SDL.dll on Windows (staticSdl), matched to Big
+    // Buck HD Wild's by the engine's io_sdl calls (create_window: SDL_Quit,
+    // SDL_GetVideoInfo, SDL_GetError, SDL_GL_SetAttribute x6, SetVideoMode,
+    // SDL_WM_SetCaption), checked against SDL's source by their bodies;
+    // SDL_EnableKeyRepeat by its "keyboard repeat value less than zero".
     {"SDL_SetVideoMode", 0x081f80b0},
+    {"SDL_Init", 0x081eaa70},
+    {"SDL_WasInit", 0x081eab60},
+    {"SDL_Quit", 0x081eab80},
+    {"SDL_GetError", 0x081eaf20},
+    {"SDL_PollEvent", 0x081efd70},
+    {"SDL_EnableKeyRepeat", 0x081f0540},
+    {"SDL_FreeSurface", 0x081f3d20},
+    {"SDL_ShowCursor", 0x081f5b40},
+    {"SDL_GetVideoSurface", 0x081f6360},
+    {"SDL_GetVideoInfo", 0x081f6380},
+    {"SDL_GL_SetAttribute", 0x081f7040},
+    {"SDL_GL_SwapBuffers", 0x081f7230},
+    {"SDL_WM_SetCaption", 0x081f77c0},
+    {"SDL_GetWMInfo", 0x081f9370},
     // The g5 engine's command line parser (gCLArgs: 1360x768 by default).
     {"ParseCommandLineArgs", 0x0807d8c0},
     {NULL, 0},
@@ -2086,6 +2105,11 @@ static const RtGame rtGames[] = {
         // "push %ebp; push %edi; push %esi; push %ebx; sub $0x7c,%esp"
         .videoModeSymbol = "SDL_SetVideoMode",
         .videoModePrologue = 7,
+        .staticSdl = 1,
+        // "push %esi; push %ebx; sub $0x14,%esp", "mov 0x4(%esp),%edx;
+        // mov $0xffff,%eax", "sub $0x1c,%esp; movl $0xffff,(%esp)" and
+        // "sub $0x1c,%esp; movl $0x400,0x4(%esp)".
+        .staticSdlPrologues = {5, 9, 10, 11},
         .resolution = 0x08ac0400,
         .aspect = 0x08ac0408,
         // "push %ebp; push %edi; push %esi; push %ebx; mov $0x1,%ebx"
