@@ -141,6 +141,8 @@ namespace LibcBridge
     int bridgeStubSuccess();
     int bridgeSetrlimit(int resource, const void *rlim);
     void bridgeSrandTraced(unsigned int seed);
+    long bridgeRandom(void);
+    int bridgeRand(void);
     struct passwd;
     struct passwd *bridgeGetpwuid(unsigned int uid);
     struct passwd *bridgeGetpwnam(const char *name);
