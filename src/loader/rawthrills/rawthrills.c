@@ -134,6 +134,29 @@ static const char *procCpuinfo(char *buf, size_t size)
     }
     return buf;
 }
+
+// Nor /proc/meminfo: The Walking Dead reads its MemTotal and shows its
+// insufficient memory screen below 4 GB.
+static const char *procMeminfo(char *buf, size_t size)
+{
+    static int written;
+
+    join(buf, size, gameDir, "/tmp/proc-meminfo");
+    if (!written)
+    {
+        MEMORYSTATUSEX mem = {.dwLength = sizeof(mem)};
+        FILE *f;
+
+        if (GlobalMemoryStatusEx(&mem) && (f = fopen(buf, "wb")))
+        {
+            fprintf(f, "MemTotal:       %llu kB\nMemFree:        %llu kB\nMemAvailable:   %llu kB\n",
+                    mem.ullTotalPhys / 1024, mem.ullAvailPhys / 1024, mem.ullAvailPhys / 1024);
+            fclose(f);
+        }
+        written = 1;
+    }
+    return buf;
+}
 #endif
 
 const char *rtRedirectPath(const char *path, char *buf, size_t size)
@@ -147,6 +170,8 @@ const char *rtRedirectPath(const char *path, char *buf, size_t size)
 #ifdef _WIN32
     if (!strcmp(path, "/proc/cpuinfo"))
         return procCpuinfo(buf, size);
+    if (!strcmp(path, "/proc/meminfo"))
+        return procMeminfo(buf, size);
 #endif
 
     // The scripts ship encrypted for the dongle; the dump comes with a
