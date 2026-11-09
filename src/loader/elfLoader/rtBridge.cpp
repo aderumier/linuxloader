@@ -190,16 +190,17 @@ namespace RtBridge
         return dst;
     }
 
-    char *bridgeStrncpyChk(char *dst, size_t n, const char *src, size_t dstsz)
+    // glibc's __strncpy_chk and __strncat_chk: (s1, s2, n, s1len).
+    char *bridgeStrncpyChk(char *dst, const char *src, size_t n, size_t dstsz)
     {
         (void)dstsz;
         return strncpy(dst, src, n);
     }
 
-    char *bridgeStrncatChk(char *dst, size_t dstmax, const char *src, size_t len)
+    char *bridgeStrncatChk(char *dst, const char *src, size_t n, size_t dstsz)
     {
-        (void)dstmax;
-        return strncat(dst, src, len);
+        (void)dstsz;
+        return strncat(dst, src, n);
     }
 
     // glibc's __fread_chk: (ptr, destlen, size, n, stream).
