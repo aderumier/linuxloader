@@ -47,6 +47,9 @@ int sharedOpen64(const char *pathname, int flags, ...);
 int sharedWrite(int fd, const void *buf, size_t count);
 FILE *sharedFopen(const char *pathname, const char *mode);
 FILE *sharedFopen64(const char *pathname, const char *mode);
+#ifdef _WIN32
+const char *binaryMode(const char *mode, char *buf, size_t size);
+#endif
 int sharedFclose(FILE *stream);
 int sharedClose(int fd);
 char *sharedFgets(char *str, int n, FILE *stream);
