@@ -350,6 +350,9 @@ typedef struct RtGame
     // FULLSCREEN (the game asks for a window).
     const char *videoModeSymbol;
     size_t videoModePrologue;
+    // SDL 1.2 linked in (its entry points in symbols): on Windows its video
+    // goes to SDL.dll, its X11 driver having no answer there (rtSdl.c).
+    int staticSdl;
     // Games whose render size is a local of main, set from the command line
     // only (Big Buck HD Wild): the argument the launcher adds, a printf format
     // taking [Display] WIDTH and HEIGHT (NULL: none).
