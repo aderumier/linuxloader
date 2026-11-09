@@ -609,6 +609,12 @@ extern "C" void __attribute__((cdecl)) wrap_glTexParameterfv(GLenum target, GLen
         glad_glTexParameterfv(target, pname, params);
 }
 
+extern "C" void __attribute__((cdecl)) wrap_glTexParameteriv(GLenum target, GLenum pname, const GLint *params)
+{
+    if (glad_glTexParameteriv)
+        glad_glTexParameteriv(target, pname, params);
+}
+
 extern "C" void __attribute__((cdecl)) wrap_glPointParameterf(GLenum pname, GLfloat param)
 {
     if (glad_glPointParameterf)
@@ -863,10 +869,45 @@ extern "C" void __attribute__((cdecl)) wrap_glShaderSource(GLuint shader, GLsize
         glad_glShaderSource(shader, count, string, length);
 }
 
+// LL_GL_DEBUG=1: the shaders and programs the driver refuses, with its
+// message (a shader the driver refuses draws nothing).
+static int glDebugOn(void)
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char *v = getenv("LL_GL_DEBUG");
+        on = v && *v && strcmp(v, "0") != 0;
+    }
+    return on;
+}
+
+static void reportGlslFailure(GLuint object, int link)
+{
+    GLint ok = 1;
+    char log[2048] = "";
+    if (link ? !glad_glGetProgramiv || !glad_glGetProgramInfoLog : !glad_glGetShaderiv || !glad_glGetShaderInfoLog)
+        return;
+    if (link)
+        glad_glGetProgramiv(object, GL_LINK_STATUS, &ok);
+    else
+        glad_glGetShaderiv(object, GL_COMPILE_STATUS, &ok);
+    if (ok)
+        return;
+    if (link)
+        glad_glGetProgramInfoLog(object, sizeof(log), NULL, log);
+    else
+        glad_glGetShaderInfoLog(object, sizeof(log), NULL, log);
+    printf("[GL debug] %s %u failed: %s\n", link ? "program link" : "shader compile", object, log);
+    fflush(stdout);
+}
+
 extern "C" void __attribute__((cdecl)) wrap_glCompileShader(GLuint shader)
 {
     if (glad_glCompileShader)
         glad_glCompileShader(shader);
+    if (glDebugOn())
+        reportGlslFailure(shader, 0);
 }
 
 extern "C" void __attribute__((cdecl)) wrap_glGetShaderiv(GLuint shader, GLenum pname, GLint *params)
@@ -897,6 +938,8 @@ extern "C" void __attribute__((cdecl)) wrap_glLinkProgram(GLuint program)
 {
     if (glad_glLinkProgram)
         glad_glLinkProgram(program);
+    if (glDebugOn())
+        reportGlslFailure(program, 1);
 }
 
 extern "C" void __attribute__((cdecl)) wrap_glGetProgramiv(GLuint program, GLenum pname, GLint *params)
@@ -2167,6 +2210,8 @@ void *GLHooks_RealGlProc(const char *procName)
     if (strncmp(procName, "glu", 3) == 0)
         return GLHooks_RealGluProc(procName);
 #endif
+    if (strcmp(procName, "glTexParameteriv") == 0)
+        return (void *)&wrap_glTexParameteriv;
     if (strcmp(procName, "glActiveTexture") == 0)
         return (void *)&wrap_glActiveTexture;
     if (strcmp(procName, "glActiveTextureARB") == 0)
