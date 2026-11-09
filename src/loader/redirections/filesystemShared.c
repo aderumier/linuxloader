@@ -377,6 +377,19 @@ int sharedOpen64(const char *pathname, int flags, ...)
 }
 
 static FILE *(*_fopen)(const char *restrict pathname, const char *restrict mode) = NULL;
+#ifdef _WIN32
+// The mode with 'b' added: a Linux stream is always binary, a Windows one
+// opened without 'b' turns \r\n into \n and ends at a 0x1A byte, which
+// corrupts the games' binary and encrypted files. 't' asks for text: kept.
+const char *binaryMode(const char *mode, char *buf, size_t size)
+{
+    if (!mode || strchr(mode, 'b') || strchr(mode, 't') || strlen(mode) + 2 > size)
+        return mode;
+    snprintf(buf, size, "%sb", mode);
+    return buf;
+}
+#endif
+
 FILE *sharedFopen(const char *restrict pathname, const char *restrict mode)
 {
     if (_fopen == NULL)
@@ -384,9 +397,8 @@ FILE *sharedFopen(const char *restrict pathname, const char *restrict mode)
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
 #ifdef _WIN32
-
-    if (strcmp(mode, "r") == 0)
-        mode = "rb";
+    char modeBuf[16];
+    mode = binaryMode(mode, modeBuf, sizeof(modeBuf));
 #endif
 
     if (strcmp(pathname, "/proc/net/route") == 0)
@@ -616,6 +628,10 @@ FILE *sharedFopen64(const char *pathname, const char *mode)
         _fopen64 = REAL_FUNC(fopen64);
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
+#ifdef _WIN32
+    char modeBuf[16];
+    mode = binaryMode(mode, modeBuf, sizeof(modeBuf));
+#endif
 
     if (strcmp(pathname, "/proc/sys/kernel/osrelease") == 0)
     {
