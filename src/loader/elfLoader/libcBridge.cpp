@@ -26,6 +26,15 @@
 #include <cmath>
 
 #define MAP(name, func) SymbolResolver::GetInstance().RegisterVTable(name, reinterpret_cast<void *>(func))
+#define MAP_WITH_ORIG(name, func, origPtr)                                                                             \
+    SymbolResolver::GetInstance().RegisterVTable(name, reinterpret_cast<void *>(func), reinterpret_cast<void **>(origPtr))
+
+// The SDL DLL's loader (bridgeSdlLoadObject), and the handle of the Linux
+// libraries it loads.
+static void *(*realSdlLoadObject)(const char *);
+static void *(*realSdlLoadFunction)(void *, const char *);
+static void (*realSdlUnloadObject)(void *);
+static char nativeSdlObject;
 
 extern "C"
 {
@@ -270,6 +279,9 @@ namespace LibcBridge
         MAP("dlsym", sharedDlsym);
         MAP("dlclose", sharedDlclose);
         MAP("dlerror", sharedDlerror);
+        MAP_WITH_ORIG("SDL_LoadObject", bridgeSdlLoadObject, &realSdlLoadObject);
+        MAP_WITH_ORIG("SDL_LoadFunction", bridgeSdlLoadFunction, &realSdlLoadFunction);
+        MAP_WITH_ORIG("SDL_UnloadObject", bridgeSdlUnloadObject, &realSdlUnloadObject);
 
         MAP("kswap_collect", sharedKswap_collect);
         MAP("bzero", bridgeBzero);
@@ -1634,6 +1646,34 @@ namespace LibcBridge
             return 0;
         }
         return -1;
+    }
+
+    // SDL's own loader, which SDL_mixer uses for its decoders (Jurassic
+    // Park's linked-in one: libvorbisfile.so.3): a Linux library name goes
+    // to the ELF loader, the rest to the SDL DLL's.
+
+    void *bridgeSdlLoadObject(const char *sofile)
+    {
+        if (sofile && strstr(sofile, ".so"))
+        {
+            if (bridgeLoadNativeLibrary(sofile))
+                return &nativeSdlObject;
+            log_warn("SDL_LoadObject: no Linux library %s", sofile);
+        }
+        return realSdlLoadObject ? realSdlLoadObject(sofile) : NULL;
+    }
+
+    void *bridgeSdlLoadFunction(void *handle, const char *name)
+    {
+        if (handle == &nativeSdlObject)
+            return bridgeFindNativeSymbol(name);
+        return realSdlLoadFunction ? realSdlLoadFunction(handle, name) : NULL;
+    }
+
+    void bridgeSdlUnloadObject(void *handle)
+    {
+        if (handle != &nativeSdlObject && realSdlUnloadObject)
+            realSdlUnloadObject(handle);
     }
 
     int bridgeNice(int inc)
