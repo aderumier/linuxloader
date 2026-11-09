@@ -1483,9 +1483,24 @@ namespace RtBridge
         return nullptr;
     }
 
+    // glibc's FP_* values (NAN 0, INFINITE 1, ZERO 2, SUBNORMAL 3, NORMAL 4),
+    // not MinGW's (0x100, 0x500, 0x4000, 0x4400, 0x400): with those, every
+    // number the game checked was abnormal (Big Buck HD Wild's animals black).
     int bridgeFpclassifyf(float x)
     {
-        return fpclassify(x);
+        switch (fpclassify(x))
+        {
+        case FP_NAN:
+            return 0;
+        case FP_INFINITE:
+            return 1;
+        case FP_ZERO:
+            return 2;
+        case FP_SUBNORMAL:
+            return 3;
+        default:
+            return 4;
+        }
     }
 
     int bridgeIsoc99Swscanf(const uint32_t *s, const uint32_t *format, ...)
