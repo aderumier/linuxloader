@@ -187,7 +187,9 @@ void evdevFfbDamper(float strength)
 #ifndef __linux__
 // No evdev on Windows: the constant force goes to the first wheel's SDL
 // haptics (the loader's own SDL 3, which the games' SDL 1.2 does not shadow
-// here). The other effects stay no-ops, no game of this port asks for them.
+// here), else to the first gamepad's rumble, as on Linux: its weak (high
+// frequency) motor, as hard as the wheel would be pushed. The other effects
+// stay no-ops, no game of this port asks for them.
 
 #include <SDL3/SDL.h>
 
@@ -255,14 +257,69 @@ int evdevFfbWheel(void)
     return haptic != NULL;
 }
 
+// No wheel: the first gamepad, opened again (once a second) when there is none.
+static SDL_Gamepad *rumblePad(void)
+{
+    static SDL_Gamepad *pad;
+    static Uint64 lastTry;
+    Uint64 now = SDL_GetTicks();
+
+    if (pad && !SDL_GamepadConnected(pad))
+    {
+        SDL_CloseGamepad(pad);
+        pad = NULL;
+    }
+    if (!pad && (!lastTry || now - lastTry >= 1000))
+    {
+        int count = 0;
+        SDL_JoystickID *ids;
+
+        lastTry = now;
+        if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+            return NULL;
+        ids = SDL_GetGamepads(&count);
+        if (ids && count > 0 && (pad = SDL_OpenGamepad(ids[0])))
+            log_info("Force feedback: rumble on %s", SDL_GetGamepadName(pad));
+        SDL_free(ids);
+    }
+    return pad;
+}
+
+// The weak motor as hard as the force; renewed as the wheel's effect is, so
+// that it stops with the game.
+static void rumble(float force)
+{
+    static int rumbleLevel = -1;
+    static Uint64 lastRumble;
+    SDL_Gamepad *pad = rumblePad();
+    Uint64 now = SDL_GetTicks();
+    int level = (int)(SDL_fabsf(force) * 65535);
+
+    if (!pad)
+        return;
+    if (level == rumbleLevel && (level == 0 || now - lastRumble < FFB_RENEW_MS))
+        return;
+    if (level != rumbleLevel && level != 0 && now - lastRumble < FFB_MIN_INTERVAL_MS &&
+        SDL_abs(level - rumbleLevel) < 2 * FFB_MIN_CHANGE)
+        return;
+    SDL_RumbleGamepad(pad, 0, (Uint16)level, level ? FFB_LENGTH_MS : 0);
+    rumbleLevel = level;
+    lastRumble = now;
+}
+
 void evdevFfbConstant(float force)
 {
     Uint64 now;
     int level;
 
+    if (!(force >= -1.f)) // NaN too
+        force = force > 1.f ? 1.f : -1.f;
+    force = force > 1.f ? 1.f : force;
     if (!haptic)
+    {
+        rumble(force);
         return;
-    force = force > 1.f ? 1.f : force < -1.f ? -1.f : force;
+    }
     // A positive level pulls the wheel to the left (measured on a Logitech
     // PRO Racing Wheel), as this function's force; --setup-wheel measures others.
     level = (int)(force * 32767);
