@@ -512,6 +512,7 @@ int rtInit(void)
     rtInstallFfb(g);
     if (g->crc32 == MOTOGP_RT && g->install == NULL)
         rtMgpFfbInstall();
+    rtInstallStaticSdl(g);
     rtInstallVideo(g);
     desktopStartQuitWatch();
     return 0;
