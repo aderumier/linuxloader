@@ -45,6 +45,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
         src/loader/mainShared.c
         src/loader/config/iniParser.c
         src/loader/input/sdlInput.c
+        src/loader/input/wheelSetup.c
         src/loader/input/controlIniGen.c
         src/loader/log/log.c
         src/loader/hardware/lindbergh/output.c
