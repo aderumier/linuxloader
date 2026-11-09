@@ -225,10 +225,12 @@ namespace LibcBridge
         MAP("openlog", bridgeOpenlog);
         MAP("closelog", bridgeCloselog);
 
-        MAP("rand", rand);
-        MAP("random", rand);
+        // glibc's generators, not the CRT's (RAND_MAX 32767): see bridgeRandom.
+        MAP("rand", bridgeRand);
+        MAP("random", bridgeRandom);
         MAP("rand_r", bridgeRand_r);
         MAP("srand", bridgeSrandTraced);
+        MAP("srandom", bridgeSrandTraced);
         MAP("signal", bridgeSignal);
         MAP("raise", bridgeRaise);
         MAP("sigfillset", bridgeSigfillset);
@@ -808,12 +810,72 @@ namespace LibcBridge
         return *n ? FNM_NOMATCH : 0;
     }
 
+    // glibc's random number generators, exactly: RAND_MAX is 2^31 - 1 there
+    // and 32767 in the Windows CRT, and the games scale rand() by glibc's.
+    // With the CRT's, every number was 65536 times too small: Cruis'n Blast's
+    // rain and searchlight particles all spawned on their emitter's origin
+    // and drew as lines. glibc's algorithm and seeding, so the games get the
+    // sequences they would on Linux.
+    //
+    // random()/rand(): the additive feedback generator x[i] = x[i-3] + x[i-31]
+    // (glibc's TYPE_3), seeded by 16807 * x mod 2^31 - 1, 310 outputs dropped.
+    static int32_t randState[31];
+    static int randFront, randRear;
+    static SRWLOCK randLock = SRWLOCK_INIT;
+    static bool randSeeded;
+
+    static uint32_t randStepLocked(void)
+    {
+        uint32_t sum = (uint32_t)randState[randFront] + (uint32_t)randState[randRear];
+        randState[randFront] = (int32_t)sum;
+        randFront = (randFront + 1) % 31;
+        randRear = (randRear + 1) % 31;
+        return sum;
+    }
+
+    static void randSeedLocked(unsigned int seed)
+    {
+        int32_t word = seed ? (int32_t)seed : 1;
+        randState[0] = word;
+        for (int i = 1; i < 31; i++)
+        {
+            // 16807 * word % 2147483647 without overflow (Schrage).
+            int32_t hi = word / 127773, lo = word % 127773;
+            word = 16807 * lo - 2836 * hi;
+            if (word < 0)
+                word += 2147483647;
+            randState[i] = word;
+        }
+        randFront = 3;
+        randRear = 0;
+        for (int i = 0; i < 310; i++)
+            randStepLocked();
+        randSeeded = true;
+    }
+
     void bridgeSrandTraced(unsigned int seed)
     {
 #ifdef _WIN32
         roxorTrace('d');
 #endif
-        srand(seed);
+        AcquireSRWLockExclusive(&randLock);
+        randSeedLocked(seed);
+        ReleaseSRWLockExclusive(&randLock);
+    }
+
+    long bridgeRandom(void)
+    {
+        AcquireSRWLockExclusive(&randLock);
+        if (!randSeeded)
+            randSeedLocked(1);
+        uint32_t sum = randStepLocked();
+        ReleaseSRWLockExclusive(&randLock);
+        return (long)(sum >> 1);
+    }
+
+    int bridgeRand(void)
+    {
+        return (int)bridgeRandom();
     }
 
     int32_t bridgeTime(int32_t *tloc)
@@ -1323,11 +1385,20 @@ namespace LibcBridge
         return 0;
     }
 
+    // rand_r(): glibc's three-step LCG of the caller's seed (31 bits).
     int bridgeRand_r(unsigned int *seedp)
     {
-        log_debug("rand_r() called");
-        *seedp = rand();
-        return *seedp;
+        unsigned int next = *seedp;
+        int result;
+
+        next = next * 1103515245 + 12345;
+        result = (next / 65536) % 2048;
+        next = next * 1103515245 + 12345;
+        result = (result << 10) ^ (next / 65536) % 1024;
+        next = next * 1103515245 + 12345;
+        result = (result << 10) ^ (next / 65536) % 1024;
+        *seedp = next;
+        return result;
     }
 
     void (*bridgeSignal(int signum, void (*handler)(int)))(int)
