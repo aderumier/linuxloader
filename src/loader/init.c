@@ -100,12 +100,12 @@ void initMain(char *configPath, char *controlsPath)
             exit(1);
         }
         // The boot trace, only with ROXOR_TRACE set.
-        if (getenv("ROXOR_TRACE"))
-            if (FILE *tf = fopen("roxor_trace.log", "a"))
-            {
-                fputc('M', tf); // hooks enabled, the game's main is next
-                fclose(tf);
-            }
+        FILE *tf;
+        if (getenv("ROXOR_TRACE") && (tf = fopen("roxor_trace.log", "a")))
+        {
+            fputc('M', tf); // hooks enabled, the game's main is next
+            fclose(tf);
+        }
         printf("\n");
         return;
     }
