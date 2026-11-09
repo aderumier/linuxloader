@@ -49,6 +49,9 @@ class SymbolResolver
     // Provide the generated VTable for a class/structure
     void *GetVTable(const std::string &className);
     void RegisterVTable(const std::string &className, void *vtablePtr, void **originalSymbolPtr = nullptr);
+    // A replacement used only when no loaded library (Linux or Windows)
+    // exports the symbol: stubs for libraries a game may ship itself.
+    void RegisterFallback(const std::string &symbolName, void *replacement);
 
     // Register a symbol exported by a dynamically loaded Linux ELF
     void RegisterNativeSymbol(const std::string &symbolName, void *symbolPtr);
@@ -89,6 +92,7 @@ class SymbolResolver
 
     std::unordered_map<std::string, std::string> m_LibraryMap;
     std::unordered_map<std::string, void *> m_VTables;
+    std::unordered_map<std::string, void *> m_Fallbacks;
     std::unordered_map<std::string, void **> m_OriginalSymbolPtrs;
     std::unordered_map<std::string, void *> m_NativeSymbols;
     std::vector<void *> m_LoadedLibraries;        // Stores handles to loaded DLLs
