@@ -752,10 +752,27 @@ namespace RtBridge
     // pthread-side ones go to winpthread's, which read and write only their
     // own 4-byte word of the set.
 
+    // glibc's sigset_t: 1024 bits, signal n at bit n - 1. Nothing delivers
+    // them here, but a set is still read back (sigismember, the masks).
+    int bridgeSigaddset(void *set, int signum)
+    {
+        if (!set || signum <= 0 || signum > 1024)
+        {
+            errno = EINVAL;
+            return -1;
+        }
+        ((uint32_t *)set)[(signum - 1) / 32] |= 1u << ((signum - 1) % 32);
+        return 0;
+    }
+
     int bridgeSigdelset(void *set, int signum)
     {
-        (void)set;
-        (void)signum;
+        if (!set || signum <= 0 || signum > 1024)
+        {
+            errno = EINVAL;
+            return -1;
+        }
+        ((uint32_t *)set)[(signum - 1) / 32] &= ~(1u << ((signum - 1) % 32));
         return 0;
     }
 
@@ -2312,6 +2329,7 @@ namespace RtBridge
         MAP("sincosf", bridgeSincosf);
         MAP("setmntent", bridgeSetmntent);
         MAP("setutent", bridgeSetutent);
+        MAP("sigaddset", bridgeSigaddset);
         MAP("sigdelset", bridgeSigdelset);
         MAP("sigprocmask", bridgeSigprocmask);
         MAP("stpcpy", bridgeStpcpy);
