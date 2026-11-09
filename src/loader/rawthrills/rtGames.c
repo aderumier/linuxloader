@@ -1696,6 +1696,10 @@ static const RtGame rtGames[] = {
         .stubs = bbhdStubs,
         // SDL 1.2 is linked in, and its X11 driver has no Windows answer.
         .staticSdl = 1,
+        // "push %ebp; mov %esp,%ebp; push %ebx; lea -0x14(%esp),%esp",
+        // "push %ebp; mov $0xffff,%eax" and "push %ebp; mov %esp,%ebp;
+        // lea -0x18(%esp),%esp" (SDL_Quit, SDL_GetError).
+        .staticSdlPrologues = {8, 6, 7, 7},
         // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx"
         .videoModeSymbol = "SDL_SetVideoMode",
         .videoModePrologue = 6,

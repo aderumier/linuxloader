@@ -1,4 +1,5 @@
-// SDL 1.2 linked into the game (Big Buck HD Wild), on Windows.
+// SDL 1.2 linked into the game (Big Buck HD Wild, The Walking Dead), on
+// Windows.
 //
 // Its X11 video driver dlopens Xlib and its extensions, which the loader's
 // X11 bridge does not have: the window never opens. So its video, window and
@@ -110,13 +111,10 @@ void rtInstallStaticSdl(const RtGame *game)
         compat = NULL;
         return;
     }
-    // Prologues: "push %ebp; mov %esp,%ebp; push %ebx; lea -0x14(%esp),%esp",
-    // "push %ebp; mov $0xffff,%eax" and "push %ebp; mov %esp,%ebp;
-    // lea -0x18(%esp),%esp" (SDL_Quit, SDL_GetError).
-    *(void **)&linkedInit = rtTrampoline("SDL_Init", 8);
-    *(void **)&linkedWasInit = rtTrampoline("SDL_WasInit", 6);
-    *(void **)&linkedQuit = rtTrampoline("SDL_Quit", 7);
-    *(void **)&linkedGetError = rtTrampoline("SDL_GetError", 7);
+    *(void **)&linkedInit = rtTrampoline("SDL_Init", game->staticSdlPrologues[0]);
+    *(void **)&linkedWasInit = rtTrampoline("SDL_WasInit", game->staticSdlPrologues[1]);
+    *(void **)&linkedQuit = rtTrampoline("SDL_Quit", game->staticSdlPrologues[2]);
+    *(void **)&linkedGetError = rtTrampoline("SDL_GetError", game->staticSdlPrologues[3]);
     if (!linkedInit || !linkedWasInit || !linkedQuit || !linkedGetError)
     {
         log_error("Raw Thrills: the game's SDL entry points are not listed");
