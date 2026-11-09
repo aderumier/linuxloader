@@ -900,7 +900,10 @@ void rtInstallVideo(const RtGame *game)
     }
     if (game->videoModeSymbol)
     {
-        setVideoModeOrig = rtTrampoline(game->videoModeSymbol, game->videoModePrologue);
+        // A linked-in SDL sent to SDL.dll (rtSdl.c): through to that one.
+        *(void **)&setVideoModeOrig = rtStaticSdlTarget(game->videoModeSymbol);
+        if (!setVideoModeOrig)
+            setVideoModeOrig = rtTrampoline(game->videoModeSymbol, game->videoModePrologue);
         if (!setVideoModeOrig || rtDetour(game->videoModeSymbol, setVideoMode) != 0)
             log_warn("Raw Thrills: cannot hook %s, the game stays windowed", game->videoModeSymbol);
     }
