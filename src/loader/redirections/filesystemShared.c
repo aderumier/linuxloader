@@ -219,6 +219,66 @@ static int translateOpenMode(int mode)
 }
 #endif
 
+#ifdef _WIN32
+// /dev/urandom, /dev/random and /dev/srandom, which Windows has none of:
+// OpenSSL's RAND_poll (Big Buck HD Wild's, linked in) seeds itself from
+// them, and without a seed its key operations fail (the game's NetworkInit,
+// and with it the rest of its start-up: the animal packs, their fur). A
+// descriptor on NUL (fstat works on it) whose reads are the system's random
+// bytes, and which poll() reports readable (libcBridge.cpp).
+#define RANDOM_FDS 8
+static int randomFds[RANDOM_FDS] = {-1, -1, -1, -1, -1, -1, -1, -1};
+
+static int randomIsPath(const char *pathname)
+{
+    return pathname && (!strcmp(pathname, "/dev/urandom") || !strcmp(pathname, "/dev/random") ||
+                        !strcmp(pathname, "/dev/srandom"));
+}
+
+int randomIsFd(int fd)
+{
+    for (int i = 0; fd >= 0 && i < RANDOM_FDS; i++)
+        if (randomFds[i] == fd)
+            return 1;
+    return 0;
+}
+
+static int randomOpen(void)
+{
+    int fd = _open("NUL", _O_RDONLY | _O_BINARY);
+    for (int i = 0; fd >= 0 && i < RANDOM_FDS; i++)
+        if (randomFds[i] < 0)
+        {
+            randomFds[i] = fd;
+            return fd;
+        }
+    if (fd >= 0)
+        _close(fd);
+    errno = EMFILE;
+    return -1;
+}
+
+static ssize_t randomRead(void *buf, size_t count)
+{
+    static BOOLEAN(WINAPI * genRandom)(PVOID, ULONG);
+    if (!genRandom)
+        *(void **)&genRandom = (void *)GetProcAddress(LoadLibraryA("advapi32.dll"), "SystemFunction036");
+    if (!genRandom || !genRandom(buf, (ULONG)count))
+    {
+        errno = EIO;
+        return -1;
+    }
+    return (ssize_t)count;
+}
+
+static void randomClose(int fd)
+{
+    for (int i = 0; i < RANDOM_FDS; i++)
+        if (randomFds[i] == fd)
+            randomFds[i] = -1;
+}
+#endif
+
 int sharedOpen(const char *pathname, int flags, ...)
 {
 #ifdef __linux__
@@ -274,6 +334,8 @@ int sharedOpen(const char *pathname, int flags, ...)
         return namcoN2KickbackOpen(_open);
     if (pathname && webcamIsPath(pathname))
         return webcamOpen(pathname, flags, mode, (int (*)(const char *, int, ...))_open);
+    if (randomIsPath(pathname))
+        return randomOpen();
 #endif
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
@@ -784,6 +846,7 @@ int sharedClose(int fd)
         teamplayMjClose();
 #ifdef _WIN32
     webcamClose(fd);
+    randomClose(fd);
     if (namcoEs1JvsIsFd(fd))
         namcoEs1JvsClose();
     if (namcoEs1KickbackIsFd(fd))
@@ -859,6 +922,8 @@ ssize_t sharedRead(int fd, void *buf, size_t count)
     if (teamplayMjIsFd(fd))
         return teamplayMjRead(buf, count);
 #ifdef _WIN32
+    if (randomIsFd(fd))
+        return randomRead(buf, count);
     if (namcoEs1JvsIsFd(fd))
         return namcoEs1JvsRead(buf, count);
     if (namcoEs1KickbackIsFd(fd))
