@@ -29,6 +29,9 @@ namespace NetworkBridge
     int bridgeGethostbyname_r(const char *name, void *ret, char *buf, size_t buflen, void **result, int *h_errnop);
     int bridgeGethostbyaddr_r(const void *addr, int len, int type, void *ret, char *buf, size_t buflen, void **result,
                                         int *h_errnop);
+    void *bridgeGethostbyname(const char *name);
+    void *bridgeGethostbyaddr(const void *addr, int len, int type);
+    void *bridgeGetservbyname(const char *name, const char *proto);
     extern "C" int bridgeGethostname(char *name, size_t namelen);
     extern "C" uint16_t bridgeNtohs(uint16_t netshort);
     extern "C" uint16_t bridgeHtons(uint16_t hostshort);
