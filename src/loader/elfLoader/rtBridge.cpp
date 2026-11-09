@@ -1,6 +1,7 @@
 // Symbols the Raw Thrills games import that the other bridges do not cover:
 // the glibc internals and FORTIFY wrappers their 2015 build was made with,
-// the udev/ogg/theora libraries the cabinet ran (stubs), and the CRT and
+// the udev/ogg/theora libraries the cabinet ran (stubs, ogg/theora's
+// only when the game has no copy of its own), and the CRT and
 // win32 functions a 32-bit game looks up by its Linux names.
 
 #include <string.h>
@@ -44,6 +45,7 @@
 #include "../redirections/libcShared.h"
 
 #define MAP(name, func) SymbolResolver::GetInstance().RegisterVTable(name, reinterpret_cast<void *>(func))
+#define MAP_FALLBACK(name, func) SymbolResolver::GetInstance().RegisterFallback(name, reinterpret_cast<void *>(func))
 
 // The loader's emulated semaphore (pthreadSemaphore.cpp), as the game's sem_t.
 extern "C" int emuSemTrywait(void *sem);
@@ -953,9 +955,11 @@ namespace RtBridge
     }
 
     // ------------------------------------------------------------------
-    // ogg/theora, the cabinet's video: none, the engine's player fails its
-    // inits and takes its no-video path. The inits zero the state, a dump's
-    // .bss being what it is.
+    // ogg/theora, the cabinet's video, when the game does not ship the
+    // libraries (fallbacks: Jurassic Park's lib/ has them, and its
+    // libvorbis needs the real libogg): the engine's player fails its
+    // inits and takes its no-video path. The inits zero the state, a
+    // dump's .bss being what it is.
 
     int bridgeOggSyncInit(void *state)
     {
@@ -2393,41 +2397,41 @@ namespace RtBridge
         MAP("udev_monitor_receive_device", bridgeUdevMonitorReceiveDevice);
         MAP("udev_monitor_unref", bridgeUdevMonitorUnref);
 
-        MAP("ogg_sync_init", bridgeOggSyncInit);
-        MAP("ogg_sync_buffer", bridgeOggSyncBuffer);
-        MAP("ogg_sync_wrote", bridgeOggSyncWrote);
-        MAP("ogg_sync_clear", bridgeOggSyncClear);
-        MAP("ogg_sync_pageout", bridgeOggSyncPageout);
-        MAP("ogg_page_bos", bridgeOggPageBos);
-        MAP("ogg_page_serialno", bridgeOggPageSerialno);
-        MAP("ogg_stream_init", bridgeOggStreamInit);
-        MAP("ogg_stream_pagein", bridgeOggStreamPagein);
-        MAP("ogg_stream_flush", bridgeOggStreamFlush);
-        MAP("ogg_stream_pageout", bridgeOggStreamPageout);
-        MAP("ogg_stream_packetin", bridgeOggStreamPacketin);
-        MAP("ogg_stream_packetout", bridgeOggStreamPacketout);
-        MAP("ogg_stream_clear", bridgeOggStreamClear);
+        MAP_FALLBACK("ogg_sync_init", bridgeOggSyncInit);
+        MAP_FALLBACK("ogg_sync_buffer", bridgeOggSyncBuffer);
+        MAP_FALLBACK("ogg_sync_wrote", bridgeOggSyncWrote);
+        MAP_FALLBACK("ogg_sync_clear", bridgeOggSyncClear);
+        MAP_FALLBACK("ogg_sync_pageout", bridgeOggSyncPageout);
+        MAP_FALLBACK("ogg_page_bos", bridgeOggPageBos);
+        MAP_FALLBACK("ogg_page_serialno", bridgeOggPageSerialno);
+        MAP_FALLBACK("ogg_stream_init", bridgeOggStreamInit);
+        MAP_FALLBACK("ogg_stream_pagein", bridgeOggStreamPagein);
+        MAP_FALLBACK("ogg_stream_flush", bridgeOggStreamFlush);
+        MAP_FALLBACK("ogg_stream_pageout", bridgeOggStreamPageout);
+        MAP_FALLBACK("ogg_stream_packetin", bridgeOggStreamPacketin);
+        MAP_FALLBACK("ogg_stream_packetout", bridgeOggStreamPacketout);
+        MAP_FALLBACK("ogg_stream_clear", bridgeOggStreamClear);
 
-        MAP("theora_info_init", bridgeTheoraInfoInit);
-        MAP("theora_info_clear", bridgeTheoraInfoClear);
-        MAP("theora_decode_init", bridgeTheoraDecodeInit);
-        MAP("theora_decode_header", bridgeTheoraDecodeHeader);
-        MAP("theora_decode_packetin", bridgeTheoraDecodePacketin);
-        MAP("theora_decode_YUVout", bridgeTheoraDecodeYUVout);
-        MAP("theora_granule_frame", bridgeTheoraGranuleFrame);
-        MAP("theora_granule_time", bridgeTheoraGranuleTime);
-        MAP("theora_comment_init", bridgeTheoraCommentInit);
-        MAP("theora_comment_clear", bridgeTheoraCommentClear);
-        MAP("theora_comment_query", bridgeTheoraCommentQuery);
-        MAP("theora_comment_add", bridgeTheoraCommentAdd);
-        MAP("theora_encode_init", bridgeTheoraEncodeInit);
-        MAP("theora_encode_init2", bridgeTheoraEncodeInit2);
-        MAP("theora_encode_header", bridgeTheoraEncodeHeader);
-        MAP("theora_encode_packetout", bridgeTheoraEncodePacketout);
-        MAP("theora_encode_YUVin", bridgeTheoraEncodeYUVin);
-        MAP("theora_encode_comment", bridgeTheoraEncodeComment);
-        MAP("theora_encode_tables", bridgeTheoraEncodeTables);
-        MAP("theora_clear", bridgeTheoraClear);
+        MAP_FALLBACK("theora_info_init", bridgeTheoraInfoInit);
+        MAP_FALLBACK("theora_info_clear", bridgeTheoraInfoClear);
+        MAP_FALLBACK("theora_decode_init", bridgeTheoraDecodeInit);
+        MAP_FALLBACK("theora_decode_header", bridgeTheoraDecodeHeader);
+        MAP_FALLBACK("theora_decode_packetin", bridgeTheoraDecodePacketin);
+        MAP_FALLBACK("theora_decode_YUVout", bridgeTheoraDecodeYUVout);
+        MAP_FALLBACK("theora_granule_frame", bridgeTheoraGranuleFrame);
+        MAP_FALLBACK("theora_granule_time", bridgeTheoraGranuleTime);
+        MAP_FALLBACK("theora_comment_init", bridgeTheoraCommentInit);
+        MAP_FALLBACK("theora_comment_clear", bridgeTheoraCommentClear);
+        MAP_FALLBACK("theora_comment_query", bridgeTheoraCommentQuery);
+        MAP_FALLBACK("theora_comment_add", bridgeTheoraCommentAdd);
+        MAP_FALLBACK("theora_encode_init", bridgeTheoraEncodeInit);
+        MAP_FALLBACK("theora_encode_init2", bridgeTheoraEncodeInit2);
+        MAP_FALLBACK("theora_encode_header", bridgeTheoraEncodeHeader);
+        MAP_FALLBACK("theora_encode_packetout", bridgeTheoraEncodePacketout);
+        MAP_FALLBACK("theora_encode_YUVin", bridgeTheoraEncodeYUVin);
+        MAP_FALLBACK("theora_encode_comment", bridgeTheoraEncodeComment);
+        MAP_FALLBACK("theora_encode_tables", bridgeTheoraEncodeTables);
+        MAP_FALLBACK("theora_clear", bridgeTheoraClear);
 
         MAP("NxGetCookingLib", bridgeNxGetCookingLib);
     }

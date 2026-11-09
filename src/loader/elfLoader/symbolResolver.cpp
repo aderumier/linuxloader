@@ -562,6 +562,14 @@ void *SymbolResolver::ResolveSymbol(const std::string &symbolName, std::string *
         return originalAddr;
     }
 
+    auto fallbackIt = m_Fallbacks.find(symbolName);
+    if (fallbackIt != m_Fallbacks.end())
+    {
+        if (outModuleName)
+            *outModuleName = "Fallback";
+        return fallbackIt->second;
+    }
+
     log_info("Symbol not found: %s. Generating crash stub.", symbolName.c_str());
     if (outModuleName)
         *outModuleName = "UNRESOLVED_STUB";
@@ -659,6 +667,11 @@ void SymbolResolver::RegisterVTable(const std::string &className, void *vtablePt
         *originalSymbolPtr = nullptr;
     }
     log_debug("Registered VTable for class: %s at %p", className.c_str(), vtablePtr);
+}
+
+void SymbolResolver::RegisterFallback(const std::string &symbolName, void *replacement)
+{
+    m_Fallbacks[symbolName] = replacement;
 }
 
 void *bridgeResolveSymbol(const char *symbolName)
