@@ -802,6 +802,25 @@ static const RtSymbol bbhdSymbols[] = {
     // attaches.  Stubbed to 1 the fork never happens.
     {"TracerGuard", 0x084338e6},
     {"SDL_SetVideoMode", 0x08288c60},
+    // The rest of the SDL 1.2.14 entry points the game calls, sent to
+    // SDL.dll on Windows (staticSdl), each matched to SDL's source by its
+    // body: SDL_WasInit masks with 0xffff, SDL_Quit is QuitSubSystem(0xffff),
+    // SDL_PollEvent peeks one SDL_GETEVENT, SDL_GL_SetAttribute rejects
+    // attr > 16, ... (douggle/linuxloader-windows).
+    {"SDL_WasInit", 0x0827b050},
+    {"SDL_Quit", 0x0827b140},
+    {"SDL_Init", 0x0827b2a0},
+    {"SDL_GetError", 0x0827b4d0},
+    {"SDL_PollEvent", 0x08280530},
+    {"SDL_EnableKeyRepeat", 0x08280b10},
+    {"SDL_ShowCursor", 0x082845c0},
+    {"SDL_FreeSurface", 0x08285d70},
+    {"SDL_GetVideoSurface", 0x08286f30},
+    {"SDL_GetVideoInfo", 0x08286f50},
+    {"SDL_GetWMInfo", 0x08287790},
+    {"SDL_WM_SetCaption", 0x08287bf0},
+    {"SDL_GL_SwapBuffers", 0x08287cb0},
+    {"SDL_GL_SetAttribute", 0x08287d40},
     // The g5 io layer (io.c), in its source order: found by the constants
     // of their Jurassic Park counterparts (whose dump exports them), such as
     // the accessors' id ranges (digital: <= 0x142, then 0x146 on; analog:
@@ -1675,6 +1694,8 @@ static const RtGame rtGames[] = {
         // under /pm/g5/bbhd).
         .rootPath = "/pm",
         .stubs = bbhdStubs,
+        // SDL 1.2 is linked in, and its X11 driver has no Windows answer.
+        .staticSdl = 1,
         // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx"
         .videoModeSymbol = "SDL_SetVideoMode",
         .videoModePrologue = 6,
