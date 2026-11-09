@@ -69,6 +69,8 @@ class SymbolResolver
     // or nullptr: the engine of the Counter Strike NEO dump, looked up for
     // its hooks (namco/namcoN2Csneo.c).
     void *FindNativeSymbol(const std::string &symbolName);
+    // Whether a Linux shared object of that file name is natively loaded.
+    bool IsNativeLoaded(const std::string &fileName);
 
     // Global relocation and initialization passes
     bool ProcessAllRelocations();
@@ -117,6 +119,9 @@ extern "C"
     // The address a natively loaded Linux shared object exports under name,
     // or NULL (the Counter Strike NEO engine's symbols).
     void *bridgeFindNativeSymbol(const char *symbolName);
+    // Loads a Linux shared object (or its mapped DLL) by name, as a
+    // DT_NEEDED: 1 when it is natively loaded afterwards.
+    int bridgeLoadNativeLibrary(const char *filename);
     void EnsureLibGccLoaded();
     void *GetLibGccSymbol(const char *name);
     int loaderImportSlots(const char **names, uint32_t **slots, int max);
