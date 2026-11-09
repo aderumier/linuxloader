@@ -235,10 +235,10 @@ namespace NetworkBridge
         MAP("ntohl", bridgeNtohl);
         MAP("gethostbyname_r", bridgeGethostbyname_r);
         MAP("gethostbyaddr_r", bridgeGethostbyaddr_r);
-        MAP("gethostbyaddr", bridgeGethostbyaddr_r);
-        MAP("gethostbyname", bridgeGethostbyname_r);
+        MAP("gethostbyaddr", bridgeGethostbyaddr);
+        MAP("gethostbyname", bridgeGethostbyname);
         MAP("gethostname", bridgeGethostname);
-        MAP("getservbyname", bridgeGethostbyname_r);
+        MAP("getservbyname", bridgeGetservbyname);
     }
 
     unsigned long bridgeInet_addr(const char *cp)
@@ -466,41 +466,127 @@ extern "C" int bridgeGetsockname(SOCKET s, struct sockaddr *addr, int *addrlen)
     return -1;
 }
 
-int NetworkBridge::bridgeGethostbyname_r(const char *name, void *ret, char *buf, size_t buflen, void **result, int *h_errnop)
+// glibc's i386 struct hostent and struct servent: int fields where Winsock's
+// have shorts.
+struct LinuxHostent
 {
-    std::lock_guard<std::mutex> lock(g_net_mutex);
-    struct hostent *he = gethostbyname(name);
+    char *h_name;
+    char **h_aliases;
+    int h_addrtype;
+    int h_length;
+    char **h_addr_list;
+};
+
+struct LinuxServent
+{
+    char *s_name;
+    char **s_aliases;
+    int s_port;
+    char *s_proto;
+};
+
+// he into out, its name and addresses copied into buf (the _r calls).
+static int packHostent(const struct hostent *he, LinuxHostent *out, char *buf, size_t buflen)
+{
+    size_t count = 0;
+    while (he->h_addr_list && he->h_addr_list[count])
+        count++;
+    size_t nameLen = he->h_name ? strlen(he->h_name) + 1 : 1;
+    size_t need = (count + 2) * sizeof(char *) + count * (size_t)he->h_length + nameLen;
+    if (!out || !buf || buflen < need)
+        return ERANGE;
+
+    char **addrs = (char **)buf;
+    char **aliases = addrs + count + 1;
+    char *data = (char *)(aliases + 1);
+    for (size_t i = 0; i < count; i++, data += he->h_length)
+    {
+        memcpy(data, he->h_addr_list[i], he->h_length);
+        addrs[i] = data;
+    }
+    addrs[count] = nullptr;
+    aliases[0] = nullptr;
+    memcpy(data, he->h_name ? he->h_name : "", nameLen);
+
+    out->h_name = data;
+    out->h_aliases = aliases;
+    out->h_addrtype = he->h_addrtype;
+    out->h_length = he->h_length;
+    out->h_addr_list = addrs;
+    return 0;
+}
+
+// The _r calls: 0 and *result set, or an error number and *result NULL.
+static int hostentResult(const struct hostent *he, void *ret, char *buf, size_t buflen, void **result, int *h_errnop)
+{
+    if (result)
+        *result = nullptr;
     if (!he)
     {
         if (h_errnop)
-            *h_errnop = WSAGetLastError();
-        if (result)
-            *result = nullptr;
-        return -1;
+            *h_errnop = 1; // HOST_NOT_FOUND
+        return ENOENT;
     }
-    memcpy(ret, he, sizeof(struct hostent));
+    int error = packHostent(he, (LinuxHostent *)ret, buf, buflen);
+    if (error)
+        return error;
     if (result)
         *result = ret;
     return 0;
+}
+
+// The plain calls: a static copy, as glibc's (Winsock's own arrays stay valid
+// until this thread's next lookup).
+static LinuxHostent *hostentStatic(const struct hostent *he)
+{
+    static LinuxHostent out;
+    if (!he)
+        return nullptr;
+    out.h_name = he->h_name;
+    out.h_aliases = he->h_aliases;
+    out.h_addrtype = he->h_addrtype;
+    out.h_length = he->h_length;
+    out.h_addr_list = he->h_addr_list;
+    return &out;
+}
+
+int NetworkBridge::bridgeGethostbyname_r(const char *name, void *ret, char *buf, size_t buflen, void **result, int *h_errnop)
+{
+    std::lock_guard<std::mutex> lock(g_net_mutex);
+    return hostentResult(gethostbyname(name), ret, buf, buflen, result, h_errnop);
 }
 
 int NetworkBridge::bridgeGethostbyaddr_r(const void *addr, int len, int type, void *ret, char *buf, size_t buflen, void **result,
                                          int *h_errnop)
 {
     std::lock_guard<std::mutex> lock(g_net_mutex);
-    struct hostent *he = gethostbyaddr((const char *)addr, len, type);
-    if (!he)
-    {
-        if (h_errnop)
-            *h_errnop = WSAGetLastError();
-        if (result)
-            *result = nullptr;
-        return -1;
-    }
-    memcpy(ret, he, sizeof(struct hostent));
-    if (result)
-        *result = ret;
-    return 0;
+    return hostentResult(gethostbyaddr((const char *)addr, len, type), ret, buf, buflen, result, h_errnop);
+}
+
+void *NetworkBridge::bridgeGethostbyname(const char *name)
+{
+    std::lock_guard<std::mutex> lock(g_net_mutex);
+    return hostentStatic(gethostbyname(name));
+}
+
+void *NetworkBridge::bridgeGethostbyaddr(const void *addr, int len, int type)
+{
+    std::lock_guard<std::mutex> lock(g_net_mutex);
+    return hostentStatic(gethostbyaddr((const char *)addr, len, type));
+}
+
+void *NetworkBridge::bridgeGetservbyname(const char *name, const char *proto)
+{
+    std::lock_guard<std::mutex> lock(g_net_mutex);
+    static LinuxServent out;
+    struct servent *se = getservbyname(name, proto);
+    if (!se)
+        return nullptr;
+    out.s_name = se->s_name;
+    out.s_aliases = se->s_aliases;
+    out.s_port = se->s_port;
+    out.s_proto = se->s_proto;
+    return &out;
 }
 
 extern "C" int bridgeGethostname(char *name, size_t namelen)
