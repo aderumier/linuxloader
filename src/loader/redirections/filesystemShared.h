@@ -49,6 +49,8 @@ FILE *sharedFopen(const char *pathname, const char *mode);
 FILE *sharedFopen64(const char *pathname, const char *mode);
 #ifdef _WIN32
 const char *binaryMode(const char *mode, char *buf, size_t size);
+// A descriptor of the emulated /dev/urandom (filesystemShared.c).
+int randomIsFd(int fd);
 #endif
 int sharedFclose(FILE *stream);
 int sharedClose(int fd);

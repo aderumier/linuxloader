@@ -1646,11 +1646,20 @@ namespace LibcBridge
     {
         log_trace("Intercepted poll");
 
+        // Only the emulated /dev/urandom is ever ready (filesystemShared.c).
+        // Linux's POLLIN (1), not Winsock's (0x300).
+        const short linuxPollin = 0x001;
+        int ready = 0;
         for (int i = 0; i < nfds; i++)
         {
             fds[i].revents = 0;
+            if (randomIsFd((int)fds[i].fd) && (fds[i].events & linuxPollin))
+            {
+                fds[i].revents = linuxPollin;
+                ready++;
+            }
         }
-        return 0;
+        return ready;
     }
 
     void bridgeBzero(void *s, size_t n)
