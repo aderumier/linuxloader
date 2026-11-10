@@ -29,8 +29,8 @@ void *bridgeGetLoadedLibrary(const char *dllName);
 // Sent to SDL.dll as they are: they only concern the video, the window and
 // its events. The swap goes through the frame hook (rtSdlSwapBuffers).
 static const char *const compatNames[] = {
-    "SDL_SetVideoMode", "SDL_PollEvent",       "SDL_EnableKeyRepeat", "SDL_ShowCursor",      "SDL_FreeSurface",
-    "SDL_GetVideoSurface", "SDL_GetVideoInfo", "SDL_WM_SetCaption",   "SDL_GL_SetAttribute", NULL,
+    "SDL_SetVideoMode",    "SDL_PollEvent",     "SDL_EnableKeyRepeat", "SDL_GetVideoSurface",
+    "SDL_GetVideoInfo",    "SDL_WM_SetCaption", "SDL_GL_SetAttribute", NULL,
 };
 
 static HMODULE compat;
@@ -42,6 +42,10 @@ static int (*linkedInit)(uint32_t);
 static uint32_t (*linkedWasInit)(uint32_t);
 static void (*linkedQuit)(void);
 static const char *(*linkedGetError)(void);
+static void *(*compatGetVideoSurface)(void);
+static void (*compatFreeSurface)(void *);
+static void (*linkedFreeSurface)(void *);
+static int (*sdl2ShowCursor)(int);
 
 static int sdlInit(uint32_t flags)
 {
@@ -85,6 +89,34 @@ static int sdlGetWMInfo(void *info)
     return 0;
 }
 
+static void *compatSymbol(const char *name);
+
+// SDL2's, under SDL.dll: sdl12-compat's own makes a hidden cursor with the
+// input grabbed (a full screen window) SDL2's relative mouse mode, which
+// pins the cursor the guns are read from (desktopInput.c).
+static int sdlShowCursor(int toggle)
+{
+    static int (*compatShowCursor)(int);
+
+    if (!sdl2ShowCursor)
+        *(void **)&sdl2ShowCursor = (void *)GetProcAddress(GetModuleHandleA("SDL2.dll"), "SDL_ShowCursor");
+    if (sdl2ShowCursor)
+        return sdl2ShowCursor(toggle);
+    if (!compatShowCursor)
+        *(void **)&compatShowCursor = compatSymbol("SDL_ShowCursor");
+    return compatShowCursor ? compatShowCursor(toggle) : 0;
+}
+
+// SDL.dll's video surface to SDL.dll, the surfaces of the game's own SDL
+// (its images) to that SDL.
+static void sdlFreeSurface(void *surface)
+{
+    if (surface && surface == compatGetVideoSurface())
+        compatFreeSurface(surface);
+    else
+        linkedFreeSurface(surface);
+}
+
 static void *compatSymbol(const char *name)
 {
     void *p = (void *)GetProcAddress(compat, name);
@@ -106,7 +138,9 @@ void rtInstallStaticSdl(const RtGame *game)
     if (!(*(void **)&compatInit = compatSymbol("SDL_Init")) ||
         !(*(void **)&compatWasInit = compatSymbol("SDL_WasInit")) ||
         !(*(void **)&compatQuit = compatSymbol("SDL_Quit")) ||
-        !(*(void **)&compatGetError = compatSymbol("SDL_GetError")))
+        !(*(void **)&compatGetError = compatSymbol("SDL_GetError")) ||
+        !(*(void **)&compatGetVideoSurface = compatSymbol("SDL_GetVideoSurface")) ||
+        !(*(void **)&compatFreeSurface = compatSymbol("SDL_FreeSurface")))
     {
         compat = NULL;
         return;
@@ -115,7 +149,8 @@ void rtInstallStaticSdl(const RtGame *game)
     *(void **)&linkedWasInit = rtTrampoline("SDL_WasInit", game->staticSdlPrologues[1]);
     *(void **)&linkedQuit = rtTrampoline("SDL_Quit", game->staticSdlPrologues[2]);
     *(void **)&linkedGetError = rtTrampoline("SDL_GetError", game->staticSdlPrologues[3]);
-    if (!linkedInit || !linkedWasInit || !linkedQuit || !linkedGetError)
+    *(void **)&linkedFreeSurface = rtTrampoline("SDL_FreeSurface", game->staticSdlPrologues[4]);
+    if (!linkedInit || !linkedWasInit || !linkedQuit || !linkedGetError || !linkedFreeSurface)
     {
         log_error("Raw Thrills: the game's SDL entry points are not listed");
         compat = NULL;
@@ -127,6 +162,8 @@ void rtInstallStaticSdl(const RtGame *game)
     rtDetour("SDL_GetError", (void *)sdlGetError);
     rtDetour("SDL_GetWMInfo", (void *)sdlGetWMInfo);
     rtDetour("SDL_GL_SwapBuffers", (void *)rtSdlSwapBuffers);
+    rtDetour("SDL_FreeSurface", (void *)sdlFreeSurface);
+    rtDetour("SDL_ShowCursor", (void *)sdlShowCursor);
     for (const char *const *name = compatNames; *name; name++)
     {
         void *p = compatSymbol(*name);
