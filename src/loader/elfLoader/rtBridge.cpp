@@ -654,6 +654,12 @@ namespace RtBridge
         return (long)lrint(x);
     }
 
+    // libvorbis' (ll-deps, Jurassic Park's music).
+    double bridgeRint(double x)
+    {
+        return rint(x);
+    }
+
     // glibc's sincos takes double outputs (the float one is sincosf, below).
     void bridgeSincos(double x, double *sin, double *cos)
     {
@@ -2413,6 +2419,7 @@ namespace RtBridge
         MAP("inet_ntop", bridgeInetNtop);
         MAP("ldexp", bridgeLdexp);
         MAP("lrint", bridgeLrint);
+        MAP("rint", bridgeRint);
         MAP("sincos", bridgeSincos);
         MAP("sincosf", bridgeSincosf);
         MAP("setmntent", bridgeSetmntent);
