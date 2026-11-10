@@ -1733,8 +1733,9 @@ static const RtGame rtGames[] = {
         .staticSdl = 1,
         // "push %ebp; mov %esp,%ebp; push %ebx; lea -0x14(%esp),%esp",
         // "push %ebp; mov $0xffff,%eax" and "push %ebp; mov %esp,%ebp;
-        // lea -0x18(%esp),%esp" (SDL_Quit, SDL_GetError).
-        .staticSdlPrologues = {8, 6, 7, 7},
+        // lea -0x18(%esp),%esp" (SDL_Quit, SDL_GetError), "push %ebp;
+        // mov %esp,%ebp; push %ebx; lea -0x14(%esp),%esp" (SDL_FreeSurface).
+        .staticSdlPrologues = {8, 6, 7, 7, 8},
         // "push %ebp; mov %esp,%ebp; push %edi; push %esi; push %ebx"
         .videoModeSymbol = "SDL_SetVideoMode",
         .videoModePrologue = 6,
@@ -2124,8 +2125,9 @@ static const RtGame rtGames[] = {
         .staticSdl = 1,
         // "push %esi; push %ebx; sub $0x14,%esp", "mov 0x4(%esp),%edx;
         // mov $0xffff,%eax", "sub $0x1c,%esp; movl $0xffff,(%esp)" and
-        // "sub $0x1c,%esp; movl $0x400,0x4(%esp)".
-        .staticSdlPrologues = {5, 9, 10, 11},
+        // "sub $0x1c,%esp; movl $0x400,0x4(%esp)" and "push %ebx;
+        // sub $0x18,%esp; mov 0x20(%esp),%ebx" (SDL_FreeSurface).
+        .staticSdlPrologues = {5, 9, 10, 11, 8},
         .resolution = 0x08ac0400,
         .aspect = 0x08ac0408,
         // "push %ebp; push %edi; push %esi; push %ebx; mov $0x1,%ebx"

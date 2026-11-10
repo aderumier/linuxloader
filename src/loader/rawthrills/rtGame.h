@@ -373,9 +373,10 @@ typedef struct RtGame
     // SDL 1.2 linked in (its entry points in symbols): on Windows its video
     // goes to SDL.dll, its X11 driver having no answer there (rtSdl.c).
     int staticSdl;
-    // Bytes of the linked-in SDL_Init, SDL_WasInit, SDL_Quit and SDL_GetError
-    // relocated into trampolines (their own SDL build's prologues).
-    size_t staticSdlPrologues[4];
+    // Bytes of the linked-in SDL_Init, SDL_WasInit, SDL_Quit, SDL_GetError and
+    // SDL_FreeSurface relocated into trampolines (their own SDL build's
+    // prologues).
+    size_t staticSdlPrologues[5];
     // Games whose render size is a local of main, set from the command line
     // only (Big Buck HD Wild): the argument the launcher adds, a printf format
     // taking [Display] WIDTH and HEIGHT (NULL: none).
