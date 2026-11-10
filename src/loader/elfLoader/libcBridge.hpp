@@ -189,6 +189,8 @@ namespace LibcBridge
     int bridgeSdlBuildAudioCvt(void *cvt, int srcFormat, int srcChannels, int srcRate, int dstFormat, int dstChannels,
                                int dstRate);
     int bridgeSdlConvertAudio(void *cvt);
+    void *bridgeSdlLoadWavRw(void *src, int freesrc, void *spec, uint8_t **audioBuf, uint32_t *audioLen);
+    void bridgeSdlFreeWav(uint8_t *audioBuf);
     void *bridgeSdlLoadObject(const char *sofile);
     void *bridgeSdlLoadFunction(void *handle, const char *name);
     void bridgeSdlUnloadObject(void *handle);
