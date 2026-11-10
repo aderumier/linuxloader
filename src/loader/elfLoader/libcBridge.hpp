@@ -186,6 +186,9 @@ namespace LibcBridge
     int bridgeSigemptyset(void *set);
     int bridgeSigaction(int signum, const struct linux_sigaction *act, struct linux_sigaction *oldact);
     int bridgeNice(int inc);
+    int bridgeSdlBuildAudioCvt(void *cvt, int srcFormat, int srcChannels, int srcRate, int dstFormat, int dstChannels,
+                               int dstRate);
+    int bridgeSdlConvertAudio(void *cvt);
     void *bridgeSdlLoadObject(const char *sofile);
     void *bridgeSdlLoadFunction(void *handle, const char *name);
     void bridgeSdlUnloadObject(void *handle);
