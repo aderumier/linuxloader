@@ -405,7 +405,9 @@ static const RtSymbol twdSymbols[] = {
     // Buck HD Wild's by the engine's io_sdl calls (create_window: SDL_Quit,
     // SDL_GetVideoInfo, SDL_GetError, SDL_GL_SetAttribute x6, SetVideoMode,
     // SDL_WM_SetCaption), checked against SDL's source by their bodies;
-    // SDL_EnableKeyRepeat by its "keyboard repeat value less than zero".
+    // SDL_EnableKeyRepeat by its "keyboard repeat value less than zero",
+    // SDL_ShowCursor by its toggle (< 0: a query), SDL_FreeSurface by its
+    // refcount (+0x38) and the screen surfaces it leaves alone.
     {"SDL_SetVideoMode", 0x081f80b0},
     {"SDL_Init", 0x081eaa70},
     {"SDL_WasInit", 0x081eab60},
@@ -413,8 +415,8 @@ static const RtSymbol twdSymbols[] = {
     {"SDL_GetError", 0x081eaf20},
     {"SDL_PollEvent", 0x081efd70},
     {"SDL_EnableKeyRepeat", 0x081f0540},
-    {"SDL_FreeSurface", 0x081f3d20},
-    {"SDL_ShowCursor", 0x081f5b40},
+    {"SDL_ShowCursor", 0x081f3d20},
+    {"SDL_FreeSurface", 0x081f5b40},
     {"SDL_GetVideoSurface", 0x081f6360},
     {"SDL_GetVideoInfo", 0x081f6380},
     {"SDL_GL_SetAttribute", 0x081f7040},
