@@ -29,7 +29,10 @@
 #define MAP_WITH_ORIG(name, func, origPtr)                                                                             \
     SymbolResolver::GetInstance().RegisterVTable(name, reinterpret_cast<void *>(func), reinterpret_cast<void **>(origPtr))
 
-// The SDL DLL's loader (bridgeSdlLoadObject), and the handle of the Linux
+// The SDL DLL's audio conversion (bridgeSdlBuildAudioCvt)...
+static int (*realSdlBuildAudioCvt)(void *, int, int, int, int, int, int);
+static int (*realSdlConvertAudio)(void *);
+// ...and loader (bridgeSdlLoadObject), and the handle of the Linux
 // libraries it loads.
 static void *(*realSdlLoadObject)(const char *);
 static void *(*realSdlLoadFunction)(void *, const char *);
@@ -279,6 +282,8 @@ namespace LibcBridge
         MAP("dlsym", sharedDlsym);
         MAP("dlclose", sharedDlclose);
         MAP("dlerror", sharedDlerror);
+        MAP_WITH_ORIG("SDL_BuildAudioCVT", bridgeSdlBuildAudioCvt, &realSdlBuildAudioCvt);
+        MAP_WITH_ORIG("SDL_ConvertAudio", bridgeSdlConvertAudio, &realSdlConvertAudio);
         MAP_WITH_ORIG("SDL_LoadObject", bridgeSdlLoadObject, &realSdlLoadObject);
         MAP_WITH_ORIG("SDL_LoadFunction", bridgeSdlLoadFunction, &realSdlLoadFunction);
         MAP_WITH_ORIG("SDL_UnloadObject", bridgeSdlUnloadObject, &realSdlUnloadObject);
@@ -1646,6 +1651,41 @@ namespace LibcBridge
             return 0;
         }
         return -1;
+    }
+
+    // SDL 1.2's SDL_AudioCVT has two doubles: 84 bytes on Linux, 88 on
+    // Win32, which aligns them to 8 (the same offsets, 4 bytes of tail
+    // padding). sdl12-compat (SDL.dll) writes all 88: past the end of the
+    // games' (Jurassic Park's SDL_mixer keeps one at the end of a 100-byte
+    // block per sound, the next heap block's header overwritten, a crash on
+    // Windows). It works on a struct of its size, the games' 84 bytes
+    // copied in and out.
+#define SDL12_AUDIOCVT_LINUX 84
+    int bridgeSdlBuildAudioCvt(void *cvt, int srcFormat, int srcChannels, int srcRate, int dstFormat, int dstChannels,
+                               int dstRate)
+    {
+        alignas(8) unsigned char own[96];
+        int ret;
+
+        if (!realSdlBuildAudioCvt || !cvt)
+            return -1;
+        memcpy(own, cvt, SDL12_AUDIOCVT_LINUX);
+        ret = realSdlBuildAudioCvt(own, srcFormat, srcChannels, srcRate, dstFormat, dstChannels, dstRate);
+        memcpy(cvt, own, SDL12_AUDIOCVT_LINUX);
+        return ret;
+    }
+
+    int bridgeSdlConvertAudio(void *cvt)
+    {
+        alignas(8) unsigned char own[96];
+        int ret;
+
+        if (!realSdlConvertAudio || !cvt)
+            return -1;
+        memcpy(own, cvt, SDL12_AUDIOCVT_LINUX);
+        ret = realSdlConvertAudio(own);
+        memcpy(cvt, own, SDL12_AUDIOCVT_LINUX);
+        return ret;
     }
 
     // SDL's own loader, which SDL_mixer uses for its decoders (Jurassic
