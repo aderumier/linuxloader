@@ -32,6 +32,8 @@
 // The SDL DLL's audio conversion (bridgeSdlBuildAudioCvt)...
 static int (*realSdlBuildAudioCvt)(void *, int, int, int, int, int, int);
 static int (*realSdlConvertAudio)(void *);
+static void *(*realSdlLoadWavRw)(void *, int, void *, uint8_t **, uint32_t *);
+static void (*realSdlFreeWav)(uint8_t *);
 // ...and loader (bridgeSdlLoadObject), and the handle of the Linux
 // libraries it loads.
 static void *(*realSdlLoadObject)(const char *);
@@ -284,6 +286,8 @@ namespace LibcBridge
         MAP("dlerror", sharedDlerror);
         MAP_WITH_ORIG("SDL_BuildAudioCVT", bridgeSdlBuildAudioCvt, &realSdlBuildAudioCvt);
         MAP_WITH_ORIG("SDL_ConvertAudio", bridgeSdlConvertAudio, &realSdlConvertAudio);
+        MAP_WITH_ORIG("SDL_LoadWAV_RW", bridgeSdlLoadWavRw, &realSdlLoadWavRw);
+        MAP_WITH_ORIG("SDL_FreeWAV", bridgeSdlFreeWav, &realSdlFreeWav);
         MAP_WITH_ORIG("SDL_LoadObject", bridgeSdlLoadObject, &realSdlLoadObject);
         MAP_WITH_ORIG("SDL_LoadFunction", bridgeSdlLoadFunction, &realSdlLoadFunction);
         MAP_WITH_ORIG("SDL_UnloadObject", bridgeSdlUnloadObject, &realSdlUnloadObject);
@@ -1686,6 +1690,32 @@ namespace LibcBridge
         ret = realSdlConvertAudio(own);
         memcpy(cvt, own, SDL12_AUDIOCVT_LINUX);
         return ret;
+    }
+
+    // SDL 1.2's SDL_FreeWAV is free(): SDL_mixer frees with it the sounds it
+    // decodes itself with the game's malloc (Jurassic Park's .ogg files), the
+    // loader's aligned blocks, which SDL.dll's free (the CRT's) corrupts the
+    // heap with on Windows. The WAVs SDL.dll loads are moved to the game's
+    // heap too, so that all of them are freed by the game's free.
+    void *bridgeSdlLoadWavRw(void *src, int freesrc, void *spec, uint8_t **audioBuf, uint32_t *audioLen)
+    {
+        void *ret;
+        uint8_t *own;
+
+        if (!realSdlLoadWavRw || !(ret = realSdlLoadWavRw(src, freesrc, spec, audioBuf, audioLen)))
+            return NULL;
+        own = (uint8_t *)MemoryManager::customMalloc(*audioLen ? *audioLen : 1);
+        if (own)
+            memcpy(own, *audioBuf, *audioLen);
+        if (realSdlFreeWav)
+            realSdlFreeWav(*audioBuf);
+        *audioBuf = own;
+        return own ? ret : NULL;
+    }
+
+    void bridgeSdlFreeWav(uint8_t *audioBuf)
+    {
+        MemoryManager::customFree(audioBuf);
     }
 
     // SDL's own loader, which SDL_mixer uses for its decoders (Jurassic
