@@ -238,6 +238,17 @@ int main(int argc, char *argv[], char *envp[])
     log_debug("Initializing main...");
     initMain(configPath, controlsPath);
 
+    // The Raw Thrills games taking their video mode on the command line
+    // (sizeArgument, as rtPrepareCommand gives it on Linux): the window's.
+    char sizeArgument[64];
+    if (rtSizeArgument(elfCrc, getConfig()->width, getConfig()->height, sizeArgument, sizeof(sizeArgument)) &&
+        strlen(elfArgs) + strlen(sizeArgument) + 2 < sizeof(elfArgs))
+    {
+        if (elfArgs[0])
+            strcat(elfArgs, " ");
+        strcat(elfArgs, sizeArgument);
+    }
+
     // Raw Thrills main threads want the room the Linux launcher gives them
     // (64 MB, see rawthrills/rtLaunch.c): the 8 MB default is not enough
     // for all of them.

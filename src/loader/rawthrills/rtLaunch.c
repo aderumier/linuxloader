@@ -500,6 +500,26 @@ static void cacheDir(char *buf, size_t size, uint32_t fileCrc32)
 #endif
 }
 
+int rtSizeArgument(uint32_t fileCrc32, int width, int height, char *out, size_t size)
+{
+    const RtGame *game = rtGetGameByFileCrc(fileCrc32);
+
+    out[0] = '\0';
+    if (!game || !game->sizeArgument)
+        return 0;
+    // A turned frame is drawn at the game's own size, the only one it
+    // takes (see rtFrame.c): the game is told it whatever [Display] says.
+    if (game->frameTurn)
+    {
+        width = game->frameTurnWidth;
+        height = game->frameTurnHeight;
+    }
+    if (width <= 0 || height <= 0)
+        return 0;
+    snprintf(out, size, game->sizeArgument, width, height);
+    return 1;
+}
+
 // [Display] WIDTH and HEIGHT of the configuration, 0 if not set.
 #ifndef _WIN32
 static void configSize(const char *configPath, int *width, int *height)
@@ -531,18 +551,8 @@ void rtPrepareCommand(char *command, size_t size, uint32_t fileCrc32, const char
     {
         int width, height;
         configSize(configPath, &width, &height);
-        // A turned frame is drawn at the game's own size, the only one it
-        // takes (see rtFrame.c): the game is told it whatever [Display] says.
-        if (game->frameTurn)
-        {
-            width = game->frameTurnWidth;
-            height = game->frameTurnHeight;
-        }
-        if (width > 0 && height > 0)
-        {
+        if (rtSizeArgument(fileCrc32, width, height, sizeArgument + 1, sizeof(sizeArgument) - 1))
             sizeArgument[0] = ' ';
-            snprintf(sizeArgument + 1, sizeof(sizeArgument) - 1, game->sizeArgument, width, height);
-        }
     }
 
     snprintf(elfPath, sizeof(elfPath), "%s", command);
