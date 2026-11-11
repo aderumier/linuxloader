@@ -253,15 +253,11 @@ static int drawableArea(int *width, int *height, int area[4])
 // swap when only the border is drawn (see borderFrame.h).
 static int bordered;
 
-static void frameBegin(int width, int height)
+// The GL entry points, loaded once a context is current: 1 when they are.
+static int loadGl(void)
 {
     static int glLoaded;
-    EmulatorConfig *config = getConfig();
 
-    bordered = 0;
-    if (!isRawThrillsGame())
-        return;
-    // The GL entry points are loaded once a context is current.
     if (!glLoaded)
     {
         GLADloadfunc getProcAddress;
@@ -274,7 +270,17 @@ static void frameBegin(int width, int height)
         if (glLoaded < 0)
             log_warn("Raw Thrills: cannot load GL entry points, no border or window scaling");
     }
-    if (glLoaded <= 0)
+    return glLoaded > 0;
+}
+
+static void frameBegin(int width, int height)
+{
+    EmulatorConfig *config = getConfig();
+
+    bordered = 0;
+    if (!isRawThrillsGame())
+        return;
+    if (!loadGl())
         return;
     int area[4] = {0, 0, width, height};
     drawableArea(&width, &height, area);
@@ -586,7 +592,15 @@ static void *setVideoMode(int width, int height, int bpp, uint32_t flags)
         flags |= SDL_FULLSCREEN;
     else
         flags &= ~SDL_FULLSCREEN;
-    return setVideoModeOrig(width, height, bpp, flags);
+    void *surface = setVideoModeOrig(width, height, bpp, flags);
+#ifdef _WIN32
+    // The game's GL calls go through the loader's GL bridge (glHooks.cpp),
+    // which needs the entry points before the first frame: Big Buck HD Wild
+    // v08.40 asks for its GL strings right away (a NULL one crashes it).
+    if (surface)
+        loadGl();
+#endif
+    return surface;
 }
 
 // The window of the glutGameModeWindow games. They ask GLUT's game mode for
