@@ -519,6 +519,9 @@ const RtGame *rtGetGameByFileCrc(uint32_t fileCrc32);
 // configPath: the loader's configuration, for the games taking their video
 // mode on the command line (sizeArgument).
 void rtPrepareCommand(char *command, size_t size, uint32_t fileCrc32, const char *configPath);
+// The video mode argument of a game taking it on its command line
+// (sizeArgument), for a width x height window, in out: 1 if it has one.
+int rtSizeArgument(uint32_t fileCrc32, int width, int height, char *out, size_t size);
 
 // Windows: the game runs in the loader's process, so instead of rewriting an
 // exec command, out receives the path of a patched copy of a dump that would
