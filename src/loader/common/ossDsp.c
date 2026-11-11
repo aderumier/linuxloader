@@ -197,6 +197,7 @@ void ossDspClose(void)
 // (Gold Captain) or exit unless it answers its devices (Pirate Revenge). A
 // master and a PCM volume, kept and read back; the sound itself is not
 // scaled.
+#if !defined(_WIN32) && !defined(__MINGW32__)
 static int mixerFd = -1;
 static int mixerVolumes[SOUND_MIXER_NRDEVICES];
 
@@ -254,6 +255,36 @@ int ossMixerIoctl(unsigned long request, void *arg)
     }
     return 0;
 }
+#else
+// No IGS game on Windows: no mixer to open.
+int ossMixerIsPath(const char *path)
+{
+    (void)path;
+    return 0;
+}
+
+int ossMixerIsFd(int fd)
+{
+    (void)fd;
+    return 0;
+}
+
+int ossMixerOpen(void)
+{
+    return -1;
+}
+
+void ossMixerClose(void)
+{
+}
+
+int ossMixerIoctl(unsigned long request, void *arg)
+{
+    (void)request;
+    (void)arg;
+    return 0;
+}
+#endif
 
 static int bufferSize(void)
 {
