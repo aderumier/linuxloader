@@ -531,6 +531,12 @@ bool ElfLoader::LoadDependencies()
         SymbolResolver::GetInstance().RegisterLibrary("libXext.so.6", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libXmu.so.6", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libXi.so.6", "INTERNAL");
+        // A linked-in SDL 1.2 dlopens the X extensions; a dump's own copies
+        // (Big Buck HD Wild v08.40's lib/) need libxcb, which is not there.
+        SymbolResolver::GetInstance().RegisterLibrary("libXrender.so.1", "INTERNAL");
+        SymbolResolver::GetInstance().RegisterLibrary("libXrandr.so.2", "INTERNAL");
+        SymbolResolver::GetInstance().RegisterLibrary("libXcursor.so.1", "INTERNAL");
+        SymbolResolver::GetInstance().RegisterLibrary("libXfixes.so.3", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libGL.so.1", "INTERNAL");
         SymbolResolver::GetInstance().RegisterLibrary("libGLU.so.1", "INTERNAL");
         // The Raw Thrills g5 games': librt's clocks are the libc bridge's,
