@@ -202,6 +202,24 @@ L2 = NONE
 
 You can also edit this file by hand: add `_INVERTED` to an axis to reverse it. Without this file, the games read the axes from `controls.ini` in the game's folder. `Wheel_SDL_Mapping` is the same mapping for the games with the SDL input layer (the Lindbergh games), to which the wheel is then a gamepad: run `setup-wheel.bat` again rather than editing only `[Buttons]`.
 
+## Two light guns (Raw Thrills games)
+
+The mouse over the game's window is player 1's gun. Every mouse moves the same Windows cursor, so for two guns (GUN4IR, Sinden… in mouse mode) turn on Raw Input in `linuxloader.ini`, which reads each gun on its own:
+
+```
+[Input]
+ENABLE_RAW_GUNS = 1
+```
+
+The guns are then the first two mice reporting absolute positions (a desktop mouse or touchpad is ignored), in Windows' order. To choose which gun is which player, the log lists each mouse's device name at startup (`Desktop input: mouse 2: \\?\HID#VID_2341&PID_8042&MI_02#...`): give each player a part of its gun's name, the `VID_xxxx&PID_yyyy` when the guns differ, the whole name for two identical guns (it holds the USB port):
+
+```
+PLAYER_1_GUN = VID_2341&PID_8042
+PLAYER_2_GUN = VID_2341&PID_8043
+```
+
+A mouse named there that moves relatively (a normal mouse) aims with the Windows cursor.
+
 ## Webcams (Raw Thrills games)
 
 Cruis'n Blast's player photos use the first webcam Windows sees (through SDL), with no configuration; the game also runs without one. Windows' "Let desktop apps access your camera" setting must be on. The test menu's camera settings (brightness...) have no effect.

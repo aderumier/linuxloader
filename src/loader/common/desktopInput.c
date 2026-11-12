@@ -6,9 +6,11 @@
 // game's window (the game's own SDL's: a Windows DLL's, the game runs in
 // this process).
 
+#include <ctype.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <time.h>
@@ -27,6 +29,7 @@
 #ifdef _WIN32
 #include "../input/wheelSetup.h"
 #endif
+#include "../config/config.h"
 #include "../graphics/frameScale.h"
 #include "../hardware/lindbergh/jvs.h"
 #include "../log/log.h"
@@ -185,6 +188,245 @@ void desktopStartQuitWatch(void)
     CreateThread(NULL, 0, quitWatch, NULL, 0, NULL);
 }
 
+// Two guns through Windows Raw Input ([Input] ENABLE_RAW_GUNS), each its
+// own HID mouse in absolute mode (e.g. two GUN4IRs): GetCursorPos only sees
+// the system cursor, which every mouse moves, so with two guns it is
+// whichever moved last. RIDEV_INPUTSINK on a hidden message-only window
+// reads each device's own reports instead, by its device handle, whatever
+// window has the focus.
+//
+// The guns are the attached mice (GetRawInputDeviceList, at startup) that
+// report absolute positions, the desktop mouse and touchpads being relative:
+// player 1's the first in Windows' enumeration order, player 2's the second.
+// With [Input] PLAYER_1_GUN and PLAYER_2_GUN each player's is the mouse
+// whose device name (logged at startup) contains that text, case aside, as
+// DemulShooter binds them: "VID_2341&PID_8042" for a model, the whole name
+// for one of two identical guns (it holds the USB port's instance). A mouse
+// named there that reports relative moves aims with the system cursor.
+// Until both guns are known desktopPointer() reads the system cursor, as
+// with one gun. The absolute reports are read as spanning the primary
+// display.
+#define RAW_GUN_PLAYERS 2
+#define RAW_GUN_MICE 32
+static HANDLE rawMouse[RAW_GUN_MICE];
+static int rawMouseCount;
+static volatile LONG rawMouseX[RAW_GUN_MICE], rawMouseY[RAW_GUN_MICE]; // last absolute position, 0..65535
+static volatile LONG rawMouseAbsolute[RAW_GUN_MICE];                    // it has reported one
+static volatile LONG rawMouseButtons[RAW_GUN_MICE];                     // DESKTOP_POINTER_* bits held
+static int rawGunPinned[RAW_GUN_PLAYERS] = {-1, -1};                    // by device name
+static int rawGunsByName;
+static volatile LONG rawGunsActive; // the listener is registered
+
+static void rawGunInput(HRAWINPUT handle)
+{
+    RAWINPUT ri;
+    UINT size = sizeof(ri);
+    int m;
+
+    if (GetRawInputData(handle, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1 ||
+        ri.header.dwType != RIM_TYPEMOUSE)
+        return;
+    for (m = 0; m < rawMouseCount && rawMouse[m] != ri.header.hDevice; m++)
+        ;
+    if (m == rawMouseCount)
+        return;
+    if (ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)
+    {
+        rawMouseX[m] = ri.data.mouse.lLastX;
+        rawMouseY[m] = ri.data.mouse.lLastY;
+        rawMouseAbsolute[m] = 1;
+    }
+    static const struct
+    {
+        USHORT down, up;
+        unsigned int bit;
+    } buttons[] = {{RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_LEFT_BUTTON_UP, DESKTOP_POINTER_LEFT},
+                   {RI_MOUSE_RIGHT_BUTTON_DOWN, RI_MOUSE_RIGHT_BUTTON_UP, DESKTOP_POINTER_RIGHT},
+                   {RI_MOUSE_MIDDLE_BUTTON_DOWN, RI_MOUSE_MIDDLE_BUTTON_UP, DESKTOP_POINTER_MIDDLE}};
+    LONG held = rawMouseButtons[m];
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+    {
+        if (ri.data.mouse.usButtonFlags & buttons[i].down)
+            held |= buttons[i].bit;
+        if (ri.data.mouse.usButtonFlags & buttons[i].up)
+            held &= ~(LONG)buttons[i].bit;
+    }
+    rawMouseButtons[m] = held;
+}
+
+static LRESULT CALLBACK rawGunWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_INPUT)
+        rawGunInput((HRAWINPUT)lParam);
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// A config's device name text in a raw input device's name, case aside.
+static int rawDeviceNameMatches(const char *name, const char *want)
+{
+    char a[512], b[512];
+    size_t i;
+
+    for (i = 0; name[i] && i < sizeof(a) - 1; i++)
+        a[i] = (char)toupper((unsigned char)name[i]);
+    a[i] = 0;
+    for (i = 0; want[i] && i < sizeof(b) - 1; i++)
+        b[i] = (char)toupper((unsigned char)want[i]);
+    b[i] = 0;
+    return strstr(a, b) != NULL;
+}
+
+static void rawGunEnumerate(void)
+{
+    EmulatorConfig *config = getConfig();
+    const char *want[RAW_GUN_PLAYERS] = {config->player1Gun, config->player2Gun};
+    RAWINPUTDEVICELIST list[64];
+    UINT count = sizeof(list) / sizeof(list[0]);
+    int found = (int)GetRawInputDeviceList(list, &count, sizeof(list[0]));
+
+    rawGunsByName = want[0][0] && want[1][0];
+    for (int i = 0; i < found && rawMouseCount < RAW_GUN_MICE; i++)
+    {
+        char name[512];
+        UINT size = sizeof(name);
+        int m;
+
+        if (list[i].dwType != RIM_TYPEMOUSE)
+            continue;
+        m = rawMouseCount++;
+        rawMouse[m] = list[i].hDevice;
+        if ((int)GetRawInputDeviceInfoA(list[i].hDevice, RIDI_DEVICENAME, name, &size) <= 0)
+            name[0] = 0;
+        log_info("Desktop input: mouse %d: %s", m + 1, name);
+        for (int p = 0; rawGunsByName && name[0] && p < RAW_GUN_PLAYERS; p++)
+            if (rawGunPinned[p] < 0 && rawDeviceNameMatches(name, want[p]))
+            {
+                rawGunPinned[p] = m;
+                break;
+            }
+    }
+    for (int p = 0; rawGunsByName && p < RAW_GUN_PLAYERS; p++)
+        if (rawGunPinned[p] < 0)
+            log_warn("Desktop input: no mouse named like \"%s\" for player %d's gun", want[p], p + 1);
+}
+
+// The mouse that is a player's gun, -1 until known.
+static int rawGunMouse(int player)
+{
+    if (rawGunsByName)
+        return rawGunPinned[player];
+    for (int m = 0; m < rawMouseCount; m++)
+        if (rawMouseAbsolute[m] && player-- == 0)
+            return m;
+    return -1;
+}
+
+static DWORD WINAPI rawGunThread(LPVOID arg)
+{
+    WNDCLASSW wc;
+    HWND hwnd;
+    RAWINPUTDEVICE rid, existing[32];
+    UINT n = sizeof(existing) / sizeof(existing[0]);
+    MSG msg;
+
+    (void)arg;
+    rawGunEnumerate();
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = rawGunWndProc;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.lpszClassName = L"LinuxLoaderRawGuns";
+    RegisterClassW(&wc);
+    hwnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
+    if (!hwnd)
+        return 0;
+    // A raw input registration is the process's: only the last one for a
+    // usage gets the reports. Taking the mouse from SDL (relative mouse
+    // mode) would break it, so leave it the mouse when it has it; when it
+    // takes the mouse later, the guns stop reporting.
+    int count = (int)GetRegisteredRawInputDevices(existing, &n, sizeof(existing[0]));
+    for (int i = 0; i < count; i++)
+        if (existing[i].usUsagePage == 0x01 && existing[i].usUsage == 0x02)
+        {
+            log_warn("Desktop input: the mouse's raw input is already taken, no second gun");
+            return 0;
+        }
+    memset(&rid, 0, sizeof(rid));
+    rid.usUsagePage = 0x01; // generic desktop
+    rid.usUsage = 0x02;     // mouse
+    rid.dwFlags = RIDEV_INPUTSINK;
+    rid.hwndTarget = hwnd;
+    if (!RegisterRawInputDevices(&rid, 1, sizeof(rid)))
+    {
+        log_warn("Desktop input: RegisterRawInputDevices failed (%lu), no second gun", GetLastError());
+        return 0;
+    }
+    rawGunsActive = 1;
+    while (GetMessageW(&msg, NULL, 0, 0) > 0)
+        DispatchMessageW(&msg);
+    return 0;
+}
+
+static void startRawGuns(void)
+{
+    static int started;
+    if (!started)
+    {
+        started = 1;
+        CreateThread(NULL, 0, rawGunThread, NULL, 0, NULL);
+    }
+}
+
+// A gun's aim on the picture, 0..1 (see frameScaleWindowToGame): a
+// relative mouse's is the system cursor's.
+static int rawGunOnScreen(int m, HWND window, int w, int h, float *px, float *py)
+{
+    POINT pt;
+
+    if (rawMouseAbsolute[m])
+    {
+        pt.x = (LONG)((double)rawMouseX[m] * GetSystemMetrics(SM_CXSCREEN) / 65536.0);
+        pt.y = (LONG)((double)rawMouseY[m] * GetSystemMetrics(SM_CYSCREEN) / 65536.0);
+    }
+    else if (!GetCursorPos(&pt))
+        return 0;
+    if (!ScreenToClient(window, &pt) || pt.x < 0 || pt.y < 0 || pt.x >= w || pt.y >= h)
+        return 0;
+    *px = (float)pt.x / (w - 1);
+    *py = (float)pt.y / (h - 1);
+    return frameScaleWindowToGame(px, py);
+}
+
+// Both guns' aims and buttons, once both are known: player 1's on
+// ANALOGUE_1/2, player 2's on ANALOGUE_3/4.
+static int rawGunsState(JVSIO *io, HWND window, int w, int h)
+{
+    int mouse[RAW_GUN_PLAYERS];
+    float px, py;
+
+    if (!rawGunsActive)
+        return 0;
+    for (int p = 0; p < RAW_GUN_PLAYERS; p++)
+        if ((mouse[p] = rawGunMouse(p)) < 0)
+            return 0;
+    pointerButtons = (unsigned int)rawMouseButtons[mouse[0]];
+    for (int p = 0; p < RAW_GUN_PLAYERS; p++)
+    {
+        unsigned int held = (unsigned int)rawMouseButtons[mouse[p]];
+        if (held & DESKTOP_POINTER_LEFT)
+            io->state.inputSwitch[PLAYER_1 + p] |= BUTTON_1;
+        if (held & DESKTOP_POINTER_RIGHT)
+            io->state.inputSwitch[PLAYER_1 + p] |= BUTTON_2;
+        if (held & DESKTOP_POINTER_MIDDLE)
+            io->state.inputSwitch[PLAYER_1 + p] |= pointerMiddleBit;
+        if (rawGunOnScreen(mouse[p], window, w, h, &px, &py))
+        {
+            io->state.analogueChannel[ANALOGUE_1 + 2 * p] = 1 + (int)(px * (DESKTOP_ANALOGUE_MAX - 2));
+            io->state.analogueChannel[ANALOGUE_2 + 2 * p] = 1 + (int)(py * (DESKTOP_ANALOGUE_MAX - 2));
+        }
+    }
+    return 1;
+}
+
 static void desktopPointer(JVSIO *io)
 {
     HWND window;
@@ -192,11 +434,15 @@ static void desktopPointer(JVSIO *io)
     POINT pt;
     DWORD pid;
     int w, h, x, y;
+    float px, py;
 
     io->analogueMax = DESKTOP_ANALOGUE_MAX;
     io->state.analogueChannel[ANALOGUE_1] = io->state.analogueChannel[ANALOGUE_2] = 0;
+    io->state.analogueChannel[ANALOGUE_3] = io->state.analogueChannel[ANALOGUE_4] = 0;
     pointerButtons = 0;
     pointerWindowWidth = pointerWindowHeight = 0;
+    if (getConfig()->enableRawGuns)
+        startRawGuns();
     window = GetForegroundWindow();
     if (!window || GetWindowThreadProcessId(window, &pid) == 0 || pid != GetCurrentProcessId() || !GetClientRect(window, &rect))
         return;
@@ -206,6 +452,12 @@ static void desktopPointer(JVSIO *io)
     h = rect.bottom - rect.top;
     pointerWindowWidth = w;
     pointerWindowHeight = h;
+    if (w <= 1 || h <= 1)
+        return;
+
+    if (rawGunsState(io, window, w, h))
+        return;
+    // One gun: the system cursor.
     if (GetAsyncKeyState(VK_LBUTTON) & 0x8000)
         pointerButtons |= DESKTOP_POINTER_LEFT;
     if (GetAsyncKeyState(VK_RBUTTON) & 0x8000)
@@ -220,13 +472,14 @@ static void desktopPointer(JVSIO *io)
         io->state.inputSwitch[PLAYER_1] |= pointerMiddleBit;
     // The cursor in client coordinates (rect is the client area, its origin
     // (0,0), so the client-to-screen offset is not the window's).
-    if (w <= 1 || h <= 1 || !GetCursorPos(&pt) || !ScreenToClient(window, &pt))
+    if (!GetCursorPos(&pt) || !ScreenToClient(window, &pt))
         return;
     x = pt.x;
     y = pt.y;
     if (x < 0 || y < 0 || x >= w || y >= h)
         return;
-    float px = (float)x / (w - 1), py = (float)y / (h - 1);
+    px = (float)x / (w - 1);
+    py = (float)y / (h - 1);
     if (!frameScaleWindowToGame(&px, &py))
         return;
     io->state.analogueChannel[ANALOGUE_1] = 1 + (int)(px * (DESKTOP_ANALOGUE_MAX - 2));

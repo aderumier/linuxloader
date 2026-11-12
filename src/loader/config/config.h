@@ -408,6 +408,12 @@ typedef struct
     float cpuFreqGhz;
     ArcadeInputs arcadeInputs;
     int inputMode; // 0 = both, 1 = SDL, 2 = EVDEV only
+    // Windows: two guns through Raw Input, each player's mouse by a part
+    // of its device name, else the first two in absolute mode (see
+    // desktopInput.c).
+    int enableRawGuns;
+    char player1Gun[256];
+    char player2Gun[256];
     int skipOutrunCabinetCheck;
     float whiteBorderPercentage;
     float blackBorderPercentage;
