@@ -204,6 +204,9 @@ void setDefaultValues(EmulatorConfig *cfg)
     cfg->whiteBorderPercentage = 0.02f;
     cfg->blackBorderPercentage = 0.0f;
     cfg->inputMode = 1;
+    cfg->enableRawGuns = 0;
+    strcpy(cfg->player1Gun, "");
+    strcpy(cfg->player2Gun, "");
     cfg->enableCrosshairs = 0;
     cfg->gsevoCrosshairAlwaysOn = 0;
     cfg->gsevoCrosshairAlwaysOff = 0;
@@ -340,6 +343,9 @@ void applyIniConfig(EmulatorConfig *config, const IniConfig *ini)
 
     // [Input]
     config->inputMode = getInt(ini, "Input", "INPUT_MODE", config->inputMode);
+    config->enableRawGuns = getInt(ini, "Input", "ENABLE_RAW_GUNS", config->enableRawGuns);
+    getString(ini, "Input", "PLAYER_1_GUN", config->player1Gun, sizeof(config->player1Gun));
+    getString(ini, "Input", "PLAYER_2_GUN", config->player2Gun, sizeof(config->player2Gun));
 
     // [Emulation]
     const char *regionRaw = getValue(ini, "Emulation", "REGION");
