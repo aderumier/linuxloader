@@ -101,6 +101,15 @@ extern "C" int emuSemTrywait(void *sem);
 extern "C" int emuSemPost(void *sem);
 extern "C" int emuSemGetValue(void *sem, int *sval);
 
+// The C library's search functions with their C signatures: <cstring>
+// declares C++ const/non-const overloads with some MinGW headers and the C
+// prototype only with others, so no cast to one function type builds on both.
+static void *libcMemchr(const void *s, int c, size_t n) { return const_cast<void *>(memchr(s, c, n)); }
+static char *libcStrchr(const char *s, int c) { return const_cast<char *>(strchr(s, c)); }
+static char *libcStrrchr(const char *s, int c) { return const_cast<char *>(strrchr(s, c)); }
+static char *libcStrstr(const char *s, const char *find) { return const_cast<char *>(strstr(s, find)); }
+static char *libcStrpbrk(const char *s, const char *accept) { return const_cast<char *>(strpbrk(s, accept)); }
+
 SymbolResolver::SymbolResolver()
 {
     m_VTables["__gmon_start__"] = reinterpret_cast<void *>(__gmon_start__);
@@ -129,15 +138,15 @@ SymbolResolver::SymbolResolver()
     m_VTables["memcpy"] = reinterpret_cast<void *>(memcpy);
     m_VTables["memset"] = reinterpret_cast<void *>(memset);
     m_VTables["memcmp"] = reinterpret_cast<void *>(memcmp);
-    m_VTables["memchr"] = reinterpret_cast<void *>(static_cast<void *(*)(const void *, int, size_t)>(memchr));
+    m_VTables["memchr"] = reinterpret_cast<void *>(libcMemchr);
     m_VTables["strlen"] = reinterpret_cast<void *>(strlen);
     m_VTables["strcpy"] = reinterpret_cast<void *>(strcpy);
     m_VTables["strncpy"] = reinterpret_cast<void *>(sharedStrncpy);
     m_VTables["strcmp"] = reinterpret_cast<void *>(strcmp);
     m_VTables["strncmp"] = reinterpret_cast<void *>(strncmp);
-    m_VTables["strchr"] = reinterpret_cast<void *>(static_cast<char *(*)(const char *, int)>(strchr));
-    m_VTables["strrchr"] = reinterpret_cast<void *>(static_cast<char *(*)(const char *, int)>(strrchr));
-    m_VTables["strstr"] = reinterpret_cast<void *>(static_cast<char *(*)(const char *, const char *)>(strstr));
+    m_VTables["strchr"] = reinterpret_cast<void *>(libcStrchr);
+    m_VTables["strrchr"] = reinterpret_cast<void *>(libcStrrchr);
+    m_VTables["strstr"] = reinterpret_cast<void *>(libcStrstr);
     m_VTables["strtol"] = reinterpret_cast<void *>(strtol);
     m_VTables["strtod"] = reinterpret_cast<void *>(strtod);
     m_VTables["strerror"] = reinterpret_cast<void *>(strerror);
@@ -145,7 +154,7 @@ SymbolResolver::SymbolResolver()
     m_VTables["strtok_r"] = reinterpret_cast<void *>(strtok_r);
     m_VTables["strncat"] = reinterpret_cast<void *>(strncat);
     m_VTables["strcat"] = reinterpret_cast<void *>(strcat);
-    m_VTables["strpbrk"] = reinterpret_cast<void *>(static_cast<char *(*)(const char *, const char *)>(strpbrk));
+    m_VTables["strpbrk"] = reinterpret_cast<void *>(libcStrpbrk);
     m_VTables["strcspn"] = reinterpret_cast<void *>(strcspn);
     m_VTables["strspn"] = reinterpret_cast<void *>(strspn);
     m_VTables["strcasecmp"] = reinterpret_cast<void *>(strcasecmp);
