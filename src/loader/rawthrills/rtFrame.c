@@ -489,14 +489,23 @@ static void parseCommandLineArgs(int argc, char **argv)
     {
         char marker[PATH_MAX];
         snprintf(marker, sizeof(marker), "%s/%s", rtGameDir(), videoGame->codePatchMarker);
+#ifdef _WIN32
+        applyCodePatches = _access(marker, 0) == 0;
+#else
         applyCodePatches = access(marker, F_OK) == 0;
+#endif
     }
     for (size_t i = 0; applyCodePatches && i < videoGame->codePatchCount; i++)
     {
         uint32_t a = videoGame->codePatches[i].address;
         uintptr_t page = a & ~(uintptr_t)0xfff;
+#ifdef _WIN32
+        DWORD old;
+        if (VirtualProtect((void *)page, (a + 4 - page + 0xfff) & ~(uintptr_t)0xfff, PAGE_EXECUTE_READWRITE, &old))
+#else
         if (mprotect((void *)page, (a + 4 - page + 0xfff) & ~(uintptr_t)0xfff,
                      PROT_READ | PROT_WRITE | PROT_EXEC) == 0)
+#endif
             *(uint32_t *)(uintptr_t)a = videoGame->codePatches[i].value;
         else
             log_warn("Raw Thrills: cannot apply code patch at %#x", a);
