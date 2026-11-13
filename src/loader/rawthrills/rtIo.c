@@ -62,6 +62,12 @@ static const RtGame *currentGame;
 static int (*inputAddMap)(int src, int dst);
 static int (*gameInputMapsOrig)(void);
 static int evdevInput;
+// The guns come from the I/O slots (evdev, or Windows' raw input guns, see
+// desktopInput.c), not the game's SDL mouse: the evdev maps and filters.
+static int gunsFromIo;
+// The slots are fed for the raw input guns only (Windows): the game's own
+// SDL keyboard map counts the coins, its slots would count them again.
+static int rawGunsOnly;
 
 static void addMaps(const RtMap *maps)
 {
@@ -105,14 +111,14 @@ static int inputAddMapHook(int src, int dst)
     static int added;
     int ret;
 
-    if (filtered(currentGame->devMapFilters, src, dst) || (evdevInput && filtered(currentGame->evdevMapFilters, src, dst)))
+    if (filtered(currentGame->devMapFilters, src, dst) || (gunsFromIo && filtered(currentGame->evdevMapFilters, src, dst)))
         return 0;
     ret = inputAddMapOrig(src, dst);
     if (!added)
     {
         added = 1;
         addMaps(currentGame->extraMaps);
-        if (evdevInput)
+        if (gunsFromIo)
             addMaps(currentGame->evdevMaps);
     }
     return ret;
@@ -126,7 +132,7 @@ static int gameInputMaps(void)
 
     filterInputMaps(currentGame->devMapFilters);
     addMaps(currentGame->extraMaps);
-    if (evdevInput)
+    if (gunsFromIo)
     {
         filterInputMaps(currentGame->evdevMapFilters);
         addMaps(currentGame->evdevMaps);
@@ -356,6 +362,8 @@ static int ioLoopHook(int dt)
 
     for (const RtIoInput *in = inputs; in->type != RT_IO_END; in++)
     {
+        if (rawGunsOnly && in->type == RT_IO_COIN)
+            continue;
         if (in->type == RT_IO_SWITCH_ANALOG)
         {
             // The desktop keys: in desktop mode they are the slot's only
@@ -599,6 +607,12 @@ static void installEvdevInput(const RtGame *game)
     rtDetour(ioLoopSymbol, ioLoopHook);
     evdevInput = getConfig()->inputMode == 2;
     ioFromDesktop = !evdevInput;
+#ifdef _WIN32
+    gunsFromIo = evdevInput || getConfig()->enableRawGuns;
+    rawGunsOnly = ioFromDesktop && getConfig()->enableRawGuns && !game->ioGamepad && !game->ioDesktop;
+#else
+    gunsFromIo = evdevInput;
+#endif
     if (ioFromDesktop && game->ioGamepad)
         desktopGamepadEnable();
     if (game->irGunActiveSymbol &&
@@ -840,11 +854,12 @@ static void installRioInput(const RtGame *game)
 
 // ---------------------------------------------------------------------------
 
-// Whether the engine's I/O slots are the loader's to feed.
+// Whether the engine's I/O slots are the loader's to feed: on Windows also
+// for a gamepad, and for the raw input guns (see gunsFromIo).
 static int feedsIoSlots(const RtGame *game)
 {
 #ifdef _WIN32
-    if (game->ioGamepad)
+    if (game->ioGamepad || (getConfig()->enableRawGuns && game->evdevMaps))
         return 1;
 #endif
     return getConfig()->inputMode == 2 || game->ioDesktop;
