@@ -211,7 +211,7 @@ The mouse over the game's window is player 1's gun. Every mouse moves the same W
 ENABLE_RAW_GUNS = 1
 ```
 
-The guns are then the first two mice reporting absolute positions (a desktop mouse or touchpad is ignored), in Windows' order. To choose which gun is which player, the log lists each mouse's device name at startup (`Desktop input: mouse 2: \\?\HID#VID_2341&PID_8042&MI_02#...`): give each player a part of its gun's name, the `VID_xxxx&PID_yyyy` when the guns differ, the whole name for two identical guns (it holds the USB port):
+The guns are then the first two mice reporting absolute positions (a desktop mouse or touchpad is ignored), sorted by their device names, so each gun keeps its player from one start to the next. To choose which gun is which player instead, the log lists each mouse's device name at startup (`Desktop input: mouse 2: \\?\HID#VID_2341&PID_8042&MI_02#...`): give each player a part of its gun's name, the `VID_xxxx&PID_yyyy` when the guns differ, the whole name for two identical guns (it holds the USB port):
 
 ```
 PLAYER_1_GUN = VID_2341&PID_8042
