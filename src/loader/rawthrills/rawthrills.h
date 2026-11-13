@@ -100,6 +100,8 @@ void rtInstallVideo(const RtGame *game);
 // (rtSdl.c), and the SDL.dll function one of them now goes to.
 void rtInstallStaticSdl(const RtGame *game);
 void *rtStaticSdlTarget(const char *name);
+// Windows: SDL_ShowCursor without sdl12-compat's relative mouse mode.
+int rtSdlShowCursor(int toggle);
 
 #ifdef __cplusplus
 }
