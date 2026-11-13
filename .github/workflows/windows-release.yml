@@ -51,6 +51,7 @@ jobs:
         cp build-win32/linuxloader.exe win-release/
         cp -r libs/win32/ll-deps win-release/
         cp scripts/windows/setup-wheel.bat win-release/
+        cp README-windows.md win-release/README.md
         cd win-release
         zip -r ../linuxloader-win32.zip .
 
