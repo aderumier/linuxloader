@@ -10,20 +10,30 @@ Big Buck HD Wild (v08.29 and v08.40).
 ## Install
 
 Unzip the release anywhere, keep `ll-deps` next to `linuxloader.exe`, and put
-each game in its own folder, for example:
+each game in a `games` folder next to it, under the name its `.bat` uses:
 
 ```
 linuxloader\
   linuxloader.exe
   ll-deps\
   setup-wheel.bat
-  linuxloader.ini
-  jp.ini
-  run-jp.bat
-  games\Jurassic Park\
+  run-cb.bat        games\Cruis'n Blast\
+  run-jp.bat        games\Jurassic Park\
+  run-twd.bat       games\The Walking Dead\
+  run-bbhd.bat      games\Big Buck HD Wild\
+  run-bbhd840.bat   games\Big Buck HD Wild 8.40\
+  examples\linuxloader.ini, jp.ini
 ```
 
-A `.bat` per game, with paths relative to the `.bat` itself (`%~dp0`) so the
+Copy `examples\linuxloader.ini` (full screen, 1920x1080) and
+`examples\jp.ini` (the same, plus two light guns and the Sinden border) next to
+`linuxloader.exe` once: they are kept out of the way so that unzipping a new
+release does not overwrite your settings. `run-jp.bat` uses `jp.ini`, the
+other `.bat` files `linuxloader.ini`. Without its settings file, a game starts
+with a `linuxloader.ini` in its own folder if there is one, else with the
+defaults (640x480 in a window).
+
+The `.bat` files take their paths from their own folder (`%~dp0`), so the
 folder can be moved:
 
 ```bat

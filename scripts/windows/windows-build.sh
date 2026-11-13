@@ -6,6 +6,8 @@ cp build-win32/linuxloader.exe win-release/linuxloader.exe
 cp -r libs/win32/ll-deps win-release/
 cp scripts/windows/setup-wheel.bat win-release/
 cp README-windows.md win-release/README.md
+cp scripts/windows/run-*.bat win-release/
+cp -r scripts/windows/examples win-release/
 cp /usr/lib/gcc/i686-w64-mingw32/13-win32/libgcc_s_dw2-1.dll win-release/ll-deps/
 
 cd win-release
