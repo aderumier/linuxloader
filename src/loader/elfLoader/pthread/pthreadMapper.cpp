@@ -120,6 +120,11 @@ void PthreadMapper::Shutdown() {
 // ============================================================
 
 PthreadMutexInternal* PthreadMapper::GetOrCreateMutex(void* linux_mutex) {
+    // Every lock and wait looks its object up: a shared lookup first, so the
+    // threads using them do not queue behind each other (the exclusive lock
+    // only to create one, which checks again).
+    if (PthreadMutexInternal* found = FindMutex(linux_mutex))
+        return found;
     AcquireSRWLockExclusive(&s_lock);
     
     auto it = s_mutex_map.find(linux_mutex);
@@ -176,6 +181,11 @@ void PthreadMapper::DestroyMutex(void* linux_mutex) {
 // ============================================================
 
 PthreadCondInternal* PthreadMapper::GetOrCreateCond(void* linux_cond) {
+    // Every lock and wait looks its object up: a shared lookup first, so the
+    // threads using them do not queue behind each other (the exclusive lock
+    // only to create one, which checks again).
+    if (PthreadCondInternal* found = FindCond(linux_cond))
+        return found;
     AcquireSRWLockExclusive(&s_lock);
     
     auto it = s_cond_map.find(linux_cond);
@@ -228,6 +238,11 @@ void PthreadMapper::DestroyCond(void* linux_cond) {
 // ============================================================
 
 PthreadRwlockInternal* PthreadMapper::GetOrCreateRwlock(void* linux_rwlock) {
+    // Every lock and wait looks its object up: a shared lookup first, so the
+    // threads using them do not queue behind each other (the exclusive lock
+    // only to create one, which checks again).
+    if (PthreadRwlockInternal* found = FindRwlock(linux_rwlock))
+        return found;
     AcquireSRWLockExclusive(&s_lock);
     
     auto it = s_rwlock_map.find(linux_rwlock);
@@ -335,6 +350,11 @@ void PthreadMapper::DestroyBarrier(void* linux_barrier) {
 // ============================================================
 
 PthreadSpinInternal* PthreadMapper::GetOrCreateSpin(void* linux_spin) {
+    // Every lock and wait looks its object up: a shared lookup first, so the
+    // threads using them do not queue behind each other (the exclusive lock
+    // only to create one, which checks again).
+    if (PthreadSpinInternal* found = FindSpin(linux_spin))
+        return found;
     AcquireSRWLockExclusive(&s_lock);
     
     auto it = s_spin_map.find(linux_spin);
