@@ -62,6 +62,8 @@ static void *rtOverride(const char *name)
 {
     if (name && !strcmp(name, "XSetWMNormalHints"))
         return (void *)setWMNormalHints;
+    if (name && !strcmp(name, "SDL_ShowCursor"))
+        return (void *)rtSdlShowCursor;
     if (name && rtFrameOverride(name))
         return rtFrameOverride(name);
     if (name && rtCurrentGame() && rtCurrentGame()->override && rtCurrentGame()->override(name))
