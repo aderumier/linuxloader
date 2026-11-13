@@ -93,8 +93,10 @@ static void *compatSymbol(const char *name);
 
 // SDL2's, under SDL.dll: sdl12-compat's own makes a hidden cursor with the
 // input grabbed (a full screen window) SDL2's relative mouse mode, which
-// pins the cursor the guns are read from (desktopInput.c).
-static int sdlShowCursor(int toggle)
+// pins the cursor the guns are read from and, on SDL 3, takes the mouse's
+// raw input the raw input guns are read from (desktopInput.c). Also the
+// import of the games with a dynamically linked SDL 1.2 (rtDump.c).
+int rtSdlShowCursor(int toggle)
 {
     static int (*compatShowCursor)(int);
 
@@ -103,7 +105,7 @@ static int sdlShowCursor(int toggle)
     if (sdl2ShowCursor)
         return sdl2ShowCursor(toggle);
     if (!compatShowCursor)
-        *(void **)&compatShowCursor = compatSymbol("SDL_ShowCursor");
+        *(void **)&compatShowCursor = (void *)GetProcAddress(compat ? compat : GetModuleHandleA("SDL.dll"), "SDL_ShowCursor");
     return compatShowCursor ? compatShowCursor(toggle) : 0;
 }
 
@@ -163,7 +165,7 @@ void rtInstallStaticSdl(const RtGame *game)
     rtDetour("SDL_GetWMInfo", (void *)sdlGetWMInfo);
     rtDetour("SDL_GL_SwapBuffers", (void *)rtSdlSwapBuffers);
     rtDetour("SDL_FreeSurface", (void *)sdlFreeSurface);
-    rtDetour("SDL_ShowCursor", (void *)sdlShowCursor);
+    rtDetour("SDL_ShowCursor", (void *)rtSdlShowCursor);
     for (const char *const *name = compatNames; *name; name++)
     {
         void *p = compatSymbol(*name);

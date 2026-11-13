@@ -229,7 +229,19 @@ static void rawGunInput(HRAWINPUT handle)
     for (m = 0; m < rawMouseCount && rawMouse[m] != ri.header.hDevice; m++)
         ;
     if (m == rawMouseCount)
+    {
+        static int unlisted;
+        if (!unlisted++)
+            log_warn("Desktop input: raw input from a mouse not listed at startup (%p)", (void *)ri.header.hDevice);
         return;
+    }
+    static int reported[RAW_GUN_MICE];
+    if (!reported[m])
+    {
+        reported[m] = 1;
+        log_info("Desktop input: mouse %d reports %s positions (flags %#x)", m + 1,
+                 ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE ? "absolute" : "relative", ri.data.mouse.usFlags);
+    }
     if (ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)
     {
         rawMouseX[m] = ri.data.mouse.lLastX;
@@ -254,10 +266,42 @@ static void rawGunInput(HRAWINPUT handle)
     rawMouseButtons[m] = held;
 }
 
+static int rawGunRegister(HWND hwnd)
+{
+    RAWINPUTDEVICE rid;
+
+    memset(&rid, 0, sizeof(rid));
+    rid.usUsagePage = 0x01; // generic desktop
+    rid.usUsage = 0x02;     // mouse
+    rid.dwFlags = RIDEV_INPUTSINK;
+    rid.hwndTarget = hwnd;
+    return RegisterRawInputDevices(&rid, 1, sizeof(rid));
+}
+
+// The mouse's raw input is the process's, for one window: SDL 3 registers it
+// for its window in relative mouse mode (which rtSdl.c keeps sdl12-compat
+// from asking for), and the guns' reports then stop.
+static void rawGunCheckRegistration(HWND hwnd)
+{
+    static int taken;
+    RAWINPUTDEVICE devices[32];
+    UINT n = sizeof(devices) / sizeof(devices[0]);
+    int count = (int)GetRegisteredRawInputDevices(devices, &n, sizeof(devices[0]));
+
+    for (int i = 0; i < count; i++)
+        if (devices[i].usUsagePage == 0x01 && devices[i].usUsage == 0x02 && devices[i].hwndTarget != hwnd)
+        {
+            if (!taken++)
+                log_warn("Desktop input: window %p took the mouse's raw input, the guns stop", (void *)devices[i].hwndTarget);
+        }
+}
+
 static LRESULT CALLBACK rawGunWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_INPUT)
         rawGunInput((HRAWINPUT)lParam);
+    else if (msg == WM_TIMER)
+        rawGunCheckRegistration(hwnd);
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
@@ -325,7 +369,7 @@ static DWORD WINAPI rawGunThread(LPVOID arg)
 {
     WNDCLASSW wc;
     HWND hwnd;
-    RAWINPUTDEVICE rid, existing[32];
+    RAWINPUTDEVICE existing[32];
     UINT n = sizeof(existing) / sizeof(existing[0]);
     MSG msg;
 
@@ -339,28 +383,21 @@ static DWORD WINAPI rawGunThread(LPVOID arg)
     hwnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
     if (!hwnd)
         return 0;
-    // A raw input registration is the process's: only the last one for a
-    // usage gets the reports. Taking the mouse from SDL (relative mouse
-    // mode) would break it, so leave it the mouse when it has it; when it
-    // takes the mouse later, the guns stop reporting.
     int count = (int)GetRegisteredRawInputDevices(existing, &n, sizeof(existing[0]));
     for (int i = 0; i < count; i++)
         if (existing[i].usUsagePage == 0x01 && existing[i].usUsage == 0x02)
         {
-            log_warn("Desktop input: the mouse's raw input is already taken, no second gun");
+            log_warn("Desktop input: window %p has the mouse's raw input, no second gun", (void *)existing[i].hwndTarget);
             return 0;
         }
-    memset(&rid, 0, sizeof(rid));
-    rid.usUsagePage = 0x01; // generic desktop
-    rid.usUsage = 0x02;     // mouse
-    rid.dwFlags = RIDEV_INPUTSINK;
-    rid.hwndTarget = hwnd;
-    if (!RegisterRawInputDevices(&rid, 1, sizeof(rid)))
+    if (!rawGunRegister(hwnd))
     {
         log_warn("Desktop input: RegisterRawInputDevices failed (%lu), no second gun", GetLastError());
         return 0;
     }
     rawGunsActive = 1;
+    log_info("Desktop input: raw input listener registered");
+    SetTimer(hwnd, 1, 200, NULL);
     while (GetMessageW(&msg, NULL, 0, 0) > 0)
         DispatchMessageW(&msg);
     return 0;
@@ -408,6 +445,12 @@ static int rawGunsState(JVSIO *io, HWND window, int w, int h)
     for (int p = 0; p < RAW_GUN_PLAYERS; p++)
         if ((mouse[p] = rawGunMouse(p)) < 0)
             return 0;
+    static int assigned;
+    if (!assigned)
+    {
+        assigned = 1;
+        log_info("Desktop input: guns: player 1 mouse %d, player 2 mouse %d", mouse[0] + 1, mouse[1] + 1);
+    }
     pointerButtons = (unsigned int)rawMouseButtons[mouse[0]];
     for (int p = 0; p < RAW_GUN_PLAYERS; p++)
     {
