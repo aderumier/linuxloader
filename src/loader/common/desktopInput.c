@@ -197,7 +197,7 @@ void desktopStartQuitWatch(void)
 //
 // The guns are the attached mice (GetRawInputDeviceList, at startup) that
 // report absolute positions, the desktop mouse and touchpads being relative:
-// player 1's the first in Windows' enumeration order, player 2's the second.
+// player 1's the first by device name, player 2's the second.
 // With [Input] PLAYER_1_GUN and PLAYER_2_GUN each player's is the mouse
 // whose device name (logged at startup) contains that text, case aside, as
 // DemulShooter binds them: "VID_2341&PID_8042" for a model, the whole name
@@ -328,7 +328,12 @@ static void rawGunEnumerate(void)
     UINT count = sizeof(list) / sizeof(list[0]);
     int found = (int)GetRawInputDeviceList(list, &count, sizeof(list[0]));
 
+    static char names[RAW_GUN_MICE][512];
+
     rawGunsByName = want[0][0] && want[1][0];
+    // Sorted by device name: Windows' list order changes from one start to
+    // the next, the names (vendor and product ids, then the USB port's
+    // instance) do not, so the guns' players stay the same.
     for (int i = 0; i < found && rawMouseCount < RAW_GUN_MICE; i++)
     {
         char name[512];
@@ -337,13 +342,21 @@ static void rawGunEnumerate(void)
 
         if (list[i].dwType != RIM_TYPEMOUSE)
             continue;
-        m = rawMouseCount++;
-        rawMouse[m] = list[i].hDevice;
         if ((int)GetRawInputDeviceInfoA(list[i].hDevice, RIDI_DEVICENAME, name, &size) <= 0)
             name[0] = 0;
-        log_info("Desktop input: mouse %d: %s", m + 1, name);
-        for (int p = 0; rawGunsByName && name[0] && p < RAW_GUN_PLAYERS; p++)
-            if (rawGunPinned[p] < 0 && rawDeviceNameMatches(name, want[p]))
+        for (m = rawMouseCount++; m > 0 && _stricmp(names[m - 1], name) > 0; m--)
+        {
+            rawMouse[m] = rawMouse[m - 1];
+            memcpy(names[m], names[m - 1], sizeof(names[m]));
+        }
+        rawMouse[m] = list[i].hDevice;
+        memcpy(names[m], name, sizeof(names[m]));
+    }
+    for (int m = 0; m < rawMouseCount; m++)
+    {
+        log_info("Desktop input: mouse %d: %s", m + 1, names[m]);
+        for (int p = 0; rawGunsByName && names[m][0] && p < RAW_GUN_PLAYERS; p++)
+            if (rawGunPinned[p] < 0 && rawDeviceNameMatches(names[m], want[p]))
             {
                 rawGunPinned[p] = m;
                 break;
