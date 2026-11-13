@@ -433,6 +433,13 @@ extern "C" int loaderImportSlots(const char **names, uint32_t **slots, int max)
     return count;
 }
 
+// The loader's bridge for an imported name (what the import would bind to),
+// NULL without one.
+extern "C" void *loaderBridgedSymbol(const char *name)
+{
+    return SymbolResolver::GetInstance().GetVTable(name);
+}
+
 extern "C" void HandleUnresolvedSymbol(const char *symbolName, void *callerAddress)
 {
     printf("\n*** FATAL ERROR ***\nUnresolved symbol called: %s\nCaller Address: %p\n*******************\n", symbolName, callerAddress);

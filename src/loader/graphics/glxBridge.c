@@ -168,13 +168,28 @@ bool bridgeGlxQueryVersion(Display *dpy, int *major, int *minor)
     return true;
 }
 
+void *loaderBridgedSymbol(const char *name);
+
+// The GL names' wrappers, and the glX ones the same functions the game's
+// imports bind to (Jurassic Park asks for glXGetCurrentDisplay this way).
+// A missing name is logged once: some games ask again each time they would
+// call it, and a console line per call slowed them down.
 void *bridgeGlxGetProcAddress(const char *procName)
 {
-    void *proc = NULL;
-    proc = GLHooks_GetProcAddress(procName);
-    if (proc)
-        return proc;
+    static char missing[64][64];
+    static int missingCount;
+    void *proc;
 
+    if (!procName)
+        return NULL;
+    if (!strncmp(procName, "glX", 3) ? (proc = loaderBridgedSymbol(procName)) != NULL
+                                     : (proc = GLHooks_GetProcAddress(procName)) != NULL)
+        return proc;
+    for (int i = 0; i < missingCount; i++)
+        if (!strncmp(missing[i], procName, sizeof(missing[i]) - 1))
+            return NULL;
+    if (missingCount < 64)
+        snprintf(missing[missingCount++], sizeof(missing[0]), "%s", procName);
     log_game("GLXBridge::GetProcAddress: Missing wrapper for '%s'", procName);
     return NULL;
 }
