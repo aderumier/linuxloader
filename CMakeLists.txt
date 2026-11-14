@@ -65,6 +65,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
         src/loader/cecropia/cecropiaGames.c
         src/loader/igs/igsGames.c
         src/loader/cosmodog/cosmodogGames.c
+        src/loader/gaelco/gaelcoGames.c
         src/loader/hostLinker.c)
 
     set_target_properties(linuxloader_exe PROPERTIES LINK_FLAGS "-m32")
@@ -136,6 +137,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
         src/loader/cecropia/*.c
         src/loader/igs/*.c
         src/loader/cosmodog/*.c
+        src/loader/gaelco/*.c
         src/loader/graphics/shaderWork/*.c
         src/glad/src/gl.c)
 
@@ -143,6 +145,9 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINGW AND NOT CMAKE_C_COMPILER MATC
     set_target_properties(linuxloader PROPERTIES PREFIX "")
     target_link_libraries(linuxloader ${LINUX_LOADER_SO_LINKER_FLAGS} xdiff minhook dl)
     target_compile_options(linuxloader PRIVATE ${LINUX_LOADER_SO_C_FLAGS})
+    # errno@GLIBC_2.0 for the Gaelco games, no other library's errno.
+    target_link_options(linuxloader PRIVATE -Wl,--version-script=${PROJECT_SOURCE_DIR}/src/loader/gaelco/gaelcoErrno.ver)
+    set_property(TARGET linuxloader APPEND PROPERTY LINK_DEPENDS ${PROJECT_SOURCE_DIR}/src/loader/gaelco/gaelcoErrno.ver)
 
     # The 64-bit games (the Raw Thrills g7 dumps, the Unity games), which
     # linuxloader hands to linuxloader64: it starts them with
