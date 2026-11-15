@@ -20,7 +20,8 @@ enum { LOG_TRACE, // 0
        LOG_INFO,  // 3
        LOG_WARN,  // 4
        LOG_ERROR, // 5
-       LOG_FATAL  // 6
+       LOG_FATAL, // 6
+       LOG_OFF    // 7: only as the minimum level, nothing is logged
 };
 
 // Macro to ease logging

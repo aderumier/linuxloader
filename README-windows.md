@@ -42,8 +42,15 @@ cd /d "%~dp0games\Jurassic Park"
 "%~dp0linuxloader.exe" -c "%~dp0jp.ini" -g "%~dp0games\Jurassic Park" > "%~dp0jp-run.log" 2>&1
 ```
 
-`-c` is the settings file, `-g` the game's folder, and the log goes to
-`jp-run.log`: it is the first thing to look at when something does not work.
+`-c` is the settings file, `-g` the game's folder, and the output goes to
+`jp-run.log`. The loader's log is off by default; when something does not work,
+turn it on in the settings file and look there first:
+
+```
+[System]
+DEBUG_MSGS=1
+```
+
 Esc or Alt+F4 quits. In the `.ini` files, a comment (`;` or `#`) must be on a
 line of its own.
 
@@ -88,7 +95,7 @@ BLACK_BORDER_PERCENTAGE = 0
   to the next. A desktop mouse or touchpad is ignored. A gun counts once it has
   pointed at the screen; until both have, the Windows cursor is player 1's gun.
 - To choose which gun is which player, look for the mice listed at startup in
-  the log:
+  the log (`DEBUG_MSGS=1`):
 
   ```
   Desktop input: mouse 1: \\?\HID#VID_16C0&PID_0F01&MI_02&Col02#...

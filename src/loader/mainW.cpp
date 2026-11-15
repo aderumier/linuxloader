@@ -26,6 +26,10 @@
 #include "elfLoader/symbolResolver.hpp"
 #include "elfLoader/pthread/pthreadEmu.hpp"
 #include "loader/config/config.h"
+extern "C"
+{
+#include "loader/config/iniParser.h"
+}
 #include "log/log.h"
 #include "graphics/gpuVendor.h"
 #include "init.h"
@@ -138,9 +142,22 @@ void initBridges()
     RtBridge::initBridges();
 }
 
+// [System] DEBUG_MSGS of the configuration (initConfig's file), read before
+// initConfig, which only runs once the game is loaded.
+static bool debugMessagesEnabled(const char *path)
+{
+    IniConfig *ini = iniLoad(path && path[0] ? path : "linuxloader.ini");
+    const char *value = ini ? iniGetValue(ini, "System", "DEBUG_MSGS") : NULL;
+    bool enabled = value && (_strnicmp(value, "true", 4) == 0 || atoi(value) > 0);
+    if (ini)
+        iniFree(ini);
+    return enabled;
+}
+
 int main(int argc, char *argv[], char *envp[])
 {
-    logSetMinLevel(LOG_DEBUG);
+    // No log unless [System] DEBUG_MSGS is set.
+    logSetMinLevel(LOG_OFF);
 
     char command[MAX_PATH_LENGTH] = {0};
     char originalDir[MAX_PATH_LENGTH] = {0};
@@ -151,6 +168,8 @@ int main(int argc, char *argv[], char *envp[])
     log_info("Parsing arguments...\n");
     if (parseArgs(argc, argv, command, originalDir, gameELF, libraryPath) != PARSE_ARGS_SUCCESS)
         return EXIT_SUCCESS;
+    if (debugMessagesEnabled(configPath))
+        logSetMinLevel(LOG_DEBUG);
 
     char elfPath[MAX_PATH_LENGTH];
     char elfArgs[MAX_PATH_LENGTH] = "";
