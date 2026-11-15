@@ -17,6 +17,7 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <windows.h>
 #else
 #include <elf.h>
 #include <sys/resource.h>
@@ -481,7 +482,13 @@ static int writeFile(const char *path, const unsigned char *data, size_t size)
     }
     fclose(f);
     chmod(tmp, 0755);
+#ifdef _WIN32
+    // Windows' rename fails when path exists: a copy older than the game
+    // was then never replaced, and the game ran unpatched.
+    return MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
+#else
     return rename(tmp, path);
+#endif
 }
 
 static void cacheDir(char *buf, size_t size, uint32_t fileCrc32)
