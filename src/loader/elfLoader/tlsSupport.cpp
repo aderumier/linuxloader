@@ -322,8 +322,6 @@ void *Tls::EnsureThreadTls()
     *(uint32_t *)(block + 8) = (uint32_t)raw;
 
     TlsSetValue(Slot(), block);
-    log_info("TLS: thread %lu TCB at 0x%08X (static block 0x%x, %zu modules, DTV capacity %u)",
-             GetCurrentThreadId(), (uint32_t)(uintptr_t)block, staticUsed, modules.size(), capacity);
     return block;
 }
 
