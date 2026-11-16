@@ -258,8 +258,9 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
     )
 
 
-    # WMMT4 (its in-loader server, POSIX sockets) is not ported yet.
-    list(FILTER SRC_FILES EXCLUDE REGEX "namcoEs1Wmmt4")
+    # WMMT4 (its in-loader server, POSIX sockets) and Gundam (WIP on Linux)
+    # are not ported yet.
+    list(FILTER SRC_FILES EXCLUDE REGEX "namcoEs1Wmmt4|namcoEs1Gundam")
 
     # Executable target
     add_executable(linuxloader ${SRC_FILES})

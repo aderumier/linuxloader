@@ -1281,6 +1281,10 @@ int namcoEs1Eth0(unsigned long request, void *arg)
 // host lists none and the caller's buffer (capacity bytes) has room.
 void namcoEs1IfConf(void *arg, int capacity)
 {
+#ifdef _WIN32
+    (void)arg;
+    (void)capacity;   // Gundam's, Linux-only
+#else
     const NamcoEs1Game *g = namcoEs1CurrentGame();
     struct ifconf *ifc = arg;
     struct ifreq *req = ifc ? ifc->ifc_req : NULL;
@@ -1295,6 +1299,7 @@ void namcoEs1IfConf(void *arg, int capacity)
     snprintf(req[n].ifr_name, sizeof(req[n].ifr_name), "eth0");
     namcoEs1Eth0(SIOCGIFADDR, &req[n]);
     ifc->ifc_len += sizeof(struct ifreq);
+#endif
 }
 
 const char *namcoEs1CommandOutput(const char *command)
