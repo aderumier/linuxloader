@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <sys/mman.h>
 
 #include "importHook.h"
 #include "../log/log.h"
@@ -36,6 +35,7 @@ void *hookExecutableImport(const char *name, void *replacement)
 #include <dlfcn.h>
 #include <elf.h>
 #include <link.h>
+#include <sys/mman.h>
 static void *hookImport(struct link_map *exe, const char *name, void *replacement, int writable);
 
 void *hookExecutableImport(const char *name, void *replacement)

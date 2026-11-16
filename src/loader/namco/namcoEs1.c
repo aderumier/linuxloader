@@ -1362,6 +1362,10 @@ int namcoEs1Eth0Always(void)
 // host's own given eth0's address with eth0Always.
 void namcoEs1IfConf(void *arg, int capacity)
 {
+#ifdef _WIN32
+    (void)arg;
+    (void)capacity;   // Gundam's, Linux-only
+#else
     const NamcoEs1Game *g = namcoEs1CurrentGame();
     struct ifconf *ifc = arg;
     struct ifreq *req = ifc ? ifc->ifc_req : NULL;
@@ -1382,6 +1386,7 @@ void namcoEs1IfConf(void *arg, int capacity)
     snprintf(req[n].ifr_name, sizeof(req[n].ifr_name), "eth0");
     namcoEs1Eth0(SIOCGIFADDR, &req[n]);
     ifc->ifc_len += sizeof(struct ifreq);
+#endif
 }
 
 const char *namcoEs1CommandOutput(const char *command)
