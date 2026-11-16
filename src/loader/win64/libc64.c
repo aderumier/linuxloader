@@ -946,16 +946,74 @@ static SYSV int lx_sched_getaffinity(int pid, size_t size, uint8_t *mask)
 
 static SYSV int lx_system(const char *cmd)
 {
+    // No PulseAudio here: Halo then lets FMOD take ALSA (alsa64.c).
+    if (cmd && strstr(cmd, "pulseaudio --check"))
+        return 1 << 8;   // exit status 1
     lxLog("system(\"%s\") ignored\n", cmd ? cmd : "(null)");
     return cmd ? 0 : 1;
 }
 
-// The game's shell commands do not run here: popen reads nothing.
+// A pipe's output: a temporary file, deleted when closed.
+static FILE *pipeFile(void)
+{
+    static LONG n;
+    char dir[MAX_PATH], path[MAX_PATH];
+    FILE *f;
+    GetTempPathA(sizeof(dir), dir);
+    snprintf(path, sizeof(path), "%sll64-pipe-%lu-%ld", dir, GetCurrentProcessId(), InterlockedIncrement(&n));
+    f = fopen(path, "w+bD");
+    return f ? f : tmpfile();
+}
+
+// sha1sum "file" (Halo's file system test): "<40 hex digits>  file".
+static FILE *sha1sumOutput(const char *cmd)
+{
+    char path[MAX_PATH], buf[MAX_PATH], end;
+    const char *p = cmd + 8;
+    unsigned char digest[20];
+    static unsigned char chunk[1 << 16];
+    BCRYPT_ALG_HANDLE alg = NULL;
+    BCRYPT_HASH_HANDLE hash = NULL;
+    size_t n = 0, got;
+    int ok;
+    FILE *in, *out;
+
+    while (*p == ' ')
+        p++;
+    end = *p == '"' ? *p++ : ' ';
+    while (*p && *p != end && n + 1 < sizeof(path))
+        path[n++] = *p++;
+    path[n] = 0;
+    if (!(in = fopen(lxMapPath(path, buf, sizeof(buf)), "rb")))
+        return NULL;
+    ok = !BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA1_ALGORITHM, NULL, 0) &&
+         !BCryptCreateHash(alg, &hash, NULL, 0, NULL, 0, 0);
+    while (ok && (got = fread(chunk, 1, sizeof(chunk), in)) > 0)
+        ok = !BCryptHashData(hash, chunk, (ULONG)got, 0);
+    ok = ok && !BCryptFinishHash(hash, digest, sizeof(digest), 0);
+    fclose(in);
+    if (hash)
+        BCryptDestroyHash(hash);
+    if (alg)
+        BCryptCloseAlgorithmProvider(alg, 0);
+    if (!ok || !(out = pipeFile()))
+        return NULL;
+    for (int i = 0; i < 20; i++)
+        fprintf(out, "%02x", digest[i]);
+    fprintf(out, "  %s\n", path);
+    rewind(out);
+    return out;
+}
+
+// The game's shell commands do not run here: popen reads nothing, but for
+// the ones answered here.
 static SYSV FILE *lx_popen(const char *cmd, const char *mode)
 {
+    FILE *f;
+    if (cmd && !strncmp(cmd, "sha1sum ", 8) && mode[0] == 'r' && (f = sha1sumOutput(cmd)))
+        return f;
     lxLog("popen(\"%s\") reads nothing\n", cmd);
-    (void)mode;
-    return tmpfile();
+    return pipeFile();
 }
 static SYSV int lx_pclose(FILE *f) { fclose(f); return 0; }
 

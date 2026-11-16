@@ -18,7 +18,7 @@ static const VirtualLib virtualLibs[] = {
     {"libX11.so.6", 1}, {"libX11.so", 1}, {"libXext.so.6", 0}, {"libGL.so.1", 0}, {"libGL.so", 0},
 {"libudev.so.1", 0}, {"libudev.so.0", 0},
     {"libc.so.6", 0}, {"libm.so.6", 0}, {"libpthread.so.0", 0}, {"libdl.so.2", 0}, {"librt.so.1", 0},
-    {"libGLU.so.1", 0},
+    {"libGLU.so.1", 0}, {"libasound.so.2", 0},
 };
 
 static char globalHandle;
