@@ -28,11 +28,14 @@ static int fileExists(const char *p)
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-static const char *const exeNames[] = {"game2", "gamedump.exec"};
+// The dumps' names, looked for everywhere before Halo's: its dump is "game"
+// (the original is game.orig), the encrypted original in Centipede's folder.
+static const char *const exeNames[] = {"game2", "gamedump.exec", "game"};
+#define DUMP_NAMES 2
 
-static int findIn(const char *dir, char *exe, size_t size)
+static int findIn(const char *dir, int pass, char *exe, size_t size)
 {
-    for (size_t i = 0; i < LX_COUNT(exeNames); i++)
+    for (size_t i = pass ? DUMP_NAMES : 0; i < (pass ? LX_COUNT(exeNames) : DUMP_NAMES); i++)
     {
         snprintf(exe, size, "%s\\%s", dir, exeNames[i]);
         if (fileExists(exe))
@@ -41,17 +44,11 @@ static int findIn(const char *dir, char *exe, size_t size)
     return 0;
 }
 
-const char *lxG7FindExecutable(const char *gameDir, char *exe, size_t size)
+static int findPass(const char *gameDir, int pass, char *exe, size_t size)
 {
     static const char *const parents[] = {"g7", "pm\\g7"};
-    const char *named = lxIniValue("General", "EXECUTABLE");
-    if (named)
-    {
-        snprintf(exe, size, "%s\\%s", gameDir, named);
-        return fileExists(exe) ? exe : NULL;
-    }
-    if (findIn(gameDir, exe, size))
-        return exe;
+    if (findIn(gameDir, pass, exe, size))
+        return 1;
     for (size_t p = 0; p < LX_COUNT(parents); p++)
     {
         char pattern[MAX_PATH];
@@ -66,15 +63,26 @@ const char *lxG7FindExecutable(const char *gameDir, char *exe, size_t size)
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.')
                 continue;
             snprintf(dir, sizeof(dir), "%s\\%s\\%s", gameDir, parents[p], fd.cFileName);
-            if (findIn(dir, exe, size))
+            if (findIn(dir, pass, exe, size))
             {
                 FindClose(h);
-                return exe;
+                return 1;
             }
         } while (FindNextFileA(h, &fd));
         FindClose(h);
     }
-    return NULL;
+    return 0;
+}
+
+const char *lxG7FindExecutable(const char *gameDir, char *exe, size_t size)
+{
+    const char *named = lxIniValue("General", "EXECUTABLE");
+    if (named)
+    {
+        snprintf(exe, size, "%s\\%s", gameDir, named);
+        return fileExists(exe) ? exe : NULL;
+    }
+    return findPass(gameDir, 0, exe, size) || findPass(gameDir, 1, exe, size) ? exe : NULL;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,14 +114,13 @@ static const char *procFile(const char *name, const char *content)
 const char *lxMapPath(const char *p, char *buf, size_t size)
 {
     size_t n;
+    const char *mapped;
     if (!p)
         return NULL;
+    if (game && game->mapPath && size >= MAX_PATH && (mapped = game->mapPath(p, buf)))
+        return mapped;
     if (p[0] != '/')
         return p;
-    if (game && game->mapPath)
-    {
-        // Halo's own layout (Linux paths): not on Windows yet.
-    }
     if (game && (n = strlen(game->cabinetDir)) && !strncmp(p, game->cabinetDir, n) && (p[n] == '/' || !p[n]))
     {
         snprintf(buf, size, "%s%s", g7GameDir, p + n);
@@ -243,6 +250,12 @@ static void loadConfig(void)
     g7Config.width = lxIniInt("Display", "WIDTH", g7Config.width);
     g7Config.height = lxIniInt("Display", "HEIGHT", g7Config.height);
     g7Config.fullscreen = lxIniInt("Display", "FULLSCREEN", 0);
+    // Full screen without a size: the screen's.
+    if (g7Config.fullscreen && (g7Config.width <= 0 || g7Config.height <= 0))
+    {
+        g7Config.width = GetSystemMetrics(SM_CXSCREEN);
+        g7Config.height = GetSystemMetrics(SM_CYSCREEN);
+    }
     g7Config.keepAspectRatio = lxIniInt("Display", "KEEP_ASPECT_RATIO", g7Config.keepAspectRatio);
     g7Config.borderEnabled = lxIniInt("Display", "BORDER_ENABLED", 0);
     if ((v = lxIniValue("Display", "WHITE_BORDER_PERCENTAGE")))
