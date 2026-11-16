@@ -5,8 +5,8 @@ games on Windows. `linuxloader.exe` loads the game's Linux executable into its
 own process, so no Linux, Wine or virtual machine is needed.
 
 Tested on Windows: Cruis'n Blast (v1.25), Jurassic Park, The Walking Dead, and
-Big Buck HD Wild (v08.29 and v08.40). Centipede Chaos, a 64-bit game, runs
-with `linuxloader64.exe` (tested under Wine so far).
+Big Buck HD Wild (v08.29 and v08.40), and the 64-bit Centipede Chaos and
+Halo: Fireteam Raven, run by `linuxloader64.exe`.
 
 ## Install
 
@@ -21,6 +21,7 @@ linuxloader\
   linuxloader64.exe
   ll-deps64\
   run-centipede.bat games\Centipede Chaos\
+  run-halo.bat      games\Halo Fireteam Raven\
   setup-wheel.bat
   run-cb.bat        games\Cruis'n Blast\
   run-jp.bat        games\Jurassic Park\
@@ -172,6 +173,24 @@ second opens the test menu, F1 is service, Page Up/Down the volume. XInput
 pads are players 1 to 3: the left stick or the D-pad, A/B/X/Y the button,
 Start, Back a coin, the right stick's click the test button, the left's
 service. Esc or Alt+F4 quits.
+
+## Halo: Fireteam Raven
+
+Run by `linuxloader64.exe` too (v03.11, TeknoParrot's dump). Its folder holds
+`game` (the dump), `game.orig` (the original, which the file check hashes),
+`lib`, `data`, `eFileMaps` and the dongle's recorded answers in `dump`.
+`run-halo.bat` uses `linuxloader.ini`: `FULLSCREEN = 1` is full screen at
+`WIDTH` x `HEIGHT` (the screen's by default), `FULLSCREEN = 0` a window.
+The cabinet is the 4 player one; the environment variable
+`HALO_CABINET_TYPE=4` (or 8) makes it a 2 player one.
+
+The mouse is player 1's gun: left button the trigger, right reload, middle
+the action button. Keys: 5, 6, 7, 8 coins, 1 to 4 start (also I and O for
+players 1 and 2); F2 test, F1 service, Up/Down the volume. XInput pads are
+players 1 to 4, each aiming its gun with the sticks (or the D-pad): right
+trigger or A fires, left trigger, X or LB reload, B, Y or RB the action,
+Start, Back a coin, the right stick's click test, the left's service. Player
+1's pad takes the gun when its stick moves, the mouse when it moves.
 
 ## More
 
