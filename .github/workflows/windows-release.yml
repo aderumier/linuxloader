@@ -43,6 +43,8 @@ jobs:
       run: |
         cmake -S . -B build-win32 -DCMAKE_TOOLCHAIN_FILE=mingw32.cmake
         cmake --build build-win32 --parallel $(nproc)
+        cmake -S . -B build-win64 -DCMAKE_TOOLCHAIN_FILE=mingw64.cmake
+        cmake --build build-win64 --parallel $(nproc)
 
     - name: Package
       shell: bash
@@ -50,6 +52,8 @@ jobs:
         mkdir win-release
         cp build-win32/linuxloader.exe win-release/
         cp -r libs/win32/ll-deps win-release/
+        cp build-win64/linuxloader64.exe win-release/
+        cp -r libs/win64/ll-deps64 win-release/
         cp scripts/windows/setup-wheel.bat win-release/
         cp README-windows.md win-release/README.md
         cp scripts/windows/run-*.bat win-release/

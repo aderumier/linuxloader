@@ -13,6 +13,30 @@ include_directories(${PROJECT_SOURCE_DIR}/src/minhook/include)
 include_directories(${PROJECT_SOURCE_DIR}/src/SDL3)
 
 # ------------------------------------------------------------------------------
+# linuxloader64.exe: the 64-bit Linux games (g7) on Windows, its own build
+# (cmake -DCMAKE_TOOLCHAIN_FILE=mingw64.cmake), none of the 32-bit loader.
+# ------------------------------------------------------------------------------
+
+if((WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw") AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(STATUS "Configuring linuxloader64.exe (Windows, x86-64)")
+    file(GLOB LOADER64_SRC
+        src/loader/win64/*.c
+        src/loader/config/iniParser.c
+        src/loader/rawthrills/g7/g7Games.c
+    )
+    add_executable(linuxloader64 ${LOADER64_SRC})
+    set_property(TARGET linuxloader64 PROPERTY C_STANDARD 11)
+    target_compile_definitions(linuxloader64 PRIVATE __USE_MINGW_ANSI_STDIO=1 _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    target_compile_options(linuxloader64 PRIVATE -O2 -fno-strict-aliasing -Wall -Wno-unused-parameter -Wno-unused-function
+        -Wno-format-truncation)
+    # The main thread only waits: a small stack, out of the way of the
+    # addresses the game's executable takes (see main64.c).
+    target_link_options(linuxloader64 PRIVATE -s -Wl,--stack,1048576)
+    target_link_libraries(linuxloader64 bcrypt advapi32 gdi32 opengl32 winmm)
+    return()
+endif()
+
+# ------------------------------------------------------------------------------
 # Common Static Libraries (Built for whichever platform CMake is targeting)
 # ------------------------------------------------------------------------------
 
