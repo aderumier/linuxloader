@@ -519,7 +519,5 @@ int lxG7Args(char **argv, int max)
     return 1;
 }
 
-// Halo and Minecraft Dungeons: their hooks are Linux-only so far.
-void g7HaloInstall(const G7Game *g) { g7Log("%s: its own hooks are not ported to Windows\n", g->name); }
+// Minecraft Dungeons: its hooks are Linux-only so far.
 void g7MinecraftInstall(const G7Game *g) { g7Log("%s: its own hooks are not ported to Windows\n", g->name); }
-const char *g7HaloMapPath(const char *path, char *buf) { (void)path; (void)buf; return NULL; }
