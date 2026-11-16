@@ -5,17 +5,22 @@ games on Windows. `linuxloader.exe` loads the game's Linux executable into its
 own process, so no Linux, Wine or virtual machine is needed.
 
 Tested on Windows: Cruis'n Blast (v1.25), Jurassic Park, The Walking Dead, and
-Big Buck HD Wild (v08.29 and v08.40).
+Big Buck HD Wild (v08.29 and v08.40). Centipede Chaos, a 64-bit game, runs
+with `linuxloader64.exe` (tested under Wine so far).
 
 ## Install
 
-Unzip the release anywhere, keep `ll-deps` next to `linuxloader.exe`, and put
-each game in a `games` folder next to it, under the name its `.bat` uses:
+Unzip the release anywhere, keep `ll-deps` next to `linuxloader.exe` (and
+`ll-deps64` next to `linuxloader64.exe`), and put each game in a `games`
+folder next to it, under the name its `.bat` uses:
 
 ```
 linuxloader\
   linuxloader.exe
   ll-deps\
+  linuxloader64.exe
+  ll-deps64\
+  run-centipede.bat games\Centipede Chaos\
   setup-wheel.bat
   run-cb.bat        games\Cruis'n Blast\
   run-jp.bat        games\Jurassic Park\
@@ -151,6 +156,22 @@ Each game gives the buttons the meaning it gives a gamepad's. Without
 `wheel.ini`, the axes come from `controls.ini` in the game's folder.
 `Wheel_SDL_Mapping` makes the wheel a gamepad for the Lindbergh games: run
 `setup-wheel.bat` again rather than editing only `[Buttons]`.
+
+## Centipede Chaos
+
+`linuxloader64.exe` runs the 64-bit g7 games; Centipede Chaos (v01.11) is the
+one done so far. Its folder is the cabinet's `pm` folder: `g7\centipede\game2`
+(the dump of `game`) and the dongle's recorded answers in `g7\dump`.
+`run-centipede.bat` uses `linuxloader.ini`: with `FULLSCREEN = 1` the game
+renders at `WIDTH` x `HEIGHT` (at most the screen's, the screen's by default),
+scaled to the screen; with `FULLSCREEN = 0` it is a 1280x720 window.
+
+Keys: 5, 6, 7 coins, 1, 2, 3 start; player 1 the arrows and Space (or left
+Ctrl), player 2 D, G, R, F and A, player 3 J, L, I, K and right Ctrl; F2 held a
+second opens the test menu, F1 is service, Page Up/Down the volume. XInput
+pads are players 1 to 3: the left stick or the D-pad, A/B/X/Y the button,
+Start, Back a coin, the right stick's click the test button, the left's
+service. Esc or Alt+F4 quits.
 
 ## More
 
