@@ -123,6 +123,7 @@ void *lxUnresolvedStub(const char *name)
 
 void lxTlsRegister(void);
 void lxUcontextInit(void);
+void lxAlsaInit(void);
 
 void lxBridgesInit(void)
 {
@@ -136,4 +137,5 @@ void lxBridgesInit(void)
     lxUcontextInit();
     lxX11Init();
     lxGlInit();
+    lxAlsaInit();
 }

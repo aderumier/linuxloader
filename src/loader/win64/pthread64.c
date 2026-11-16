@@ -295,6 +295,10 @@ static SYSV int lx_mutex_trylock(void *m)
 }
 static SYSV int lx_mutex_unlock(void *m)
 {
+    // Not locked: glibc takes a normal mutex unlocked again (Halo's IR gun
+    // thread does it), but Windows faults on an SRW lock released unheld.
+    if (!*(void *volatile *)M_LOCK(m))
+        return M_KIND(m) ? 1 : 0;   // EPERM for the recursive and error checking ones
     if (M_KIND(m) == 1 && --M_COUNT(m) > 0)
         return 0;
     M_OWNER(m) = 0;

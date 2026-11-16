@@ -356,6 +356,23 @@ static void frameRect(XWin *w, int *x, int *y, int *fw, int *fh)
     }
 }
 
+static XWin *presented;
+
+int lxGamePointer(float *x, float *y)
+{
+    XWin *w = presented;
+    POINT p;
+    int fx, fy, fw, fh;
+    if (!w || !GetCursorPos(&p) || !ScreenToClient(w->hwnd, &p))
+        return 0;
+    frameRect(w, &fx, &fy, &fw, &fh);
+    if (fw <= 0 || fh <= 0)
+        return 0;
+    *x = (float)(p.x - fx) / (float)fw;
+    *y = (float)(p.y - fy) / (float)fh;
+    return *x >= 0.f && *x <= 1.f && *y >= 0.f && *y <= 1.f;
+}
+
 // Client coordinates to the game's.
 static POINT toGame(XWin *w, POINT p)
 {
@@ -1649,6 +1666,7 @@ static SYSV void glxSwapBuffers(void *d, Drawable id)
     static int glErrors = -1;
     if (glErrors < 0)
         glErrors = getenv("LL64_GLERR") != NULL;
+    presented = w;
     if (lxSwapHook)
         lxSwapHook(w->width, w->height);
     if (glErrors)

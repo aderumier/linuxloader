@@ -61,8 +61,13 @@ static LONG CALLBACK faultHandler(EXCEPTION_POINTERS *ep)
     if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION &&
         code != EXCEPTION_PRIV_INSTRUCTION && code != EXCEPTION_INT_DIVIDE_BY_ZERO && code != EXCEPTION_STACK_OVERFLOW)
         return EXCEPTION_CONTINUE_SEARCH;
-    if (InterlockedIncrement(&reported) > 3)
+    // One report, whole: the threads faulting with it wait for it to finish
+    // before the process goes.
+    if (InterlockedIncrement(&reported) > 1)
+    {
+        Sleep(3000);
         return EXCEPTION_CONTINUE_SEARCH;
+    }
     lxLogEnabled = 1;   // a crash is always reported
     lxLog("fault %#lx in thread %lu%s%#llx\n", code, GetCurrentThreadId(),
           code == EXCEPTION_ACCESS_VIOLATION ? (ep->ExceptionRecord->ExceptionInformation[0] ? ", writing " : ", reading ") : ", ",
