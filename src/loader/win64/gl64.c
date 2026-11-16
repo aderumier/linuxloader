@@ -54,7 +54,47 @@ static SYSV void c_glLinkProgram(GLuint p)
         lxLog("program %u does not link: %s\n", p, log);
     }
 }
-static const LxSym checkSyms[] = {{"glCompileShader", c_glCompileShader}, {"glLinkProgram", c_glLinkProgram}};
+// Core profile shaders calling texture2D (Halo's shield and sword ones):
+// NVIDIA's compiler takes it, Mesa's does not; it is texture() there.
+static SYSV void c_glShaderSource(GLuint sh, GLsizei count, const GLchar *const *strings, const GLint *lengths)
+{
+    size_t total = 1, o = 0;
+    char *src, *version, *line;
+    for (GLsizei i = 0; i < count; i++)
+        total += lengths && lengths[i] >= 0 ? (size_t)lengths[i] : strlen(strings[i]);
+    if (!(src = malloc(total + 32)))
+    {
+        r_glShaderSource(sh, count, strings, lengths);
+        return;
+    }
+    for (GLsizei i = 0; i < count; i++)
+    {
+        size_t n = lengths && lengths[i] >= 0 ? (size_t)lengths[i] : strlen(strings[i]);
+        memcpy(src + o, strings[i], n);
+        o += n;
+    }
+    src[o] = 0;
+    if (!(version = strstr(src, "#version")) || !(line = strchr(version, '\n')) || !strstr(version, "core") ||
+        strstr(version, "core") > line || !strstr(src, "texture2D(") || strstr(src, "define texture2D"))
+    {
+        free(src);
+        r_glShaderSource(sh, count, strings, lengths);
+        return;
+    }
+    {
+        static const char define[] = "#define texture2D texture\n";
+        const GLchar *one;
+        line++;
+        memmove(line + sizeof(define) - 1, line, strlen(line) + 1);
+        memcpy(line, define, sizeof(define) - 1);
+        one = src;
+        r_glShaderSource(sh, 1, &one, NULL);
+    }
+    free(src);
+}
+
+static const LxSym checkSyms[] = {{"glCompileShader", c_glCompileShader}, {"glLinkProgram", c_glLinkProgram},
+                                  {"glShaderSource", c_glShaderSource}};
 // LL64_GLCALLS: each GL function's calls, every 300 frames.
 void lxGlCountReport(void)
 {
