@@ -1,0 +1,44 @@
+name: 🎮 Batocera Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rawthrills
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+jobs:
+  batocera-loader:
+    name: "Build (Batocera v43)"
+    # glibc 2.35, below Batocera v43's 2.40
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Cache APT packages
+      uses: actions/cache@v4
+      with:
+        path: /var/cache/apt/archives
+        key: ${{ runner.os }}-apt-${{ hashFiles('**/install-packages.sh') }}
+        restore-keys: |
+          ${{ runner.os }}-apt-
+
+    - name: Install Packages
+      run: scripts/appimage/install-packages.sh
+
+    - name: Build Deps
+      run: scripts/appimage/build-deps.sh
+
+    - name: Compile Build for Batocera
+      shell: bash
+      run: scripts/linux/make-batocera.sh
+
+    - name: Upload linuxloader-batocera.tar.gz artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: "batocera-build"
+        path: "linuxloader-batocera.tar.gz"
