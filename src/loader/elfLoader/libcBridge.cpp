@@ -384,7 +384,7 @@ namespace LibcBridge
 
     void bridgeAbort()
     {
-        log_fatal("abort() called by ELF!");
+        log_fatal("abort() called by ELF! (from %p)", __builtin_return_address(0));
         ::abort();
     }
 

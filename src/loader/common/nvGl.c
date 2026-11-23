@@ -17,15 +17,19 @@
 // NV_GL_TRACE=1 prints each fragment program made;
 // NV_GL_NO_COMBINERS=1 leaves the combiners out (debugging).
 
-#include <dlfcn.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+// glad's entry points, loaded with the loader's window
+#include <glad/gl.h>
+#else
 #include <GL/gl.h>
 #include <GL/glext.h>
+#endif
 
 #include "nvGl.h"
 #include "importHook.h"
@@ -63,6 +67,7 @@
 #define GL_COMBINER0_NV 0x8550
 
 #define GL_VERTEX_ARRAY_RANGE_NV 0x851D
+#define GL_VERTEX_ARRAY_RANGE_WITHOUT_FLUSH_NV 0x8533
 
 #define MAX_STAGES 8
 #define MAX_UNITS 4
@@ -1051,14 +1056,22 @@ __attribute__((force_align_arg_pointer)) static void *allocateMemoryNV(GLsizei s
     (void)readFrequency;
     (void)writeFrequency;
     (void)priority;
+#ifdef _WIN32
+    memory = _aligned_malloc(size, 4096);
+#else
     if (posix_memalign(&memory, 4096, size))
         return NULL;
+#endif
     return memory;
 }
 
 __attribute__((force_align_arg_pointer)) static void freeMemoryNV(void *pointer)
 {
+#ifdef _WIN32
+    _aligned_free(pointer);
+#else
     free(pointer);
+#endif
 }
 
 __attribute__((force_align_arg_pointer)) static void vertexArrayRangeNV(GLsizei length, const void *pointer)
@@ -1071,7 +1084,7 @@ __attribute__((force_align_arg_pointer)) static void enableClientState(GLenum ar
 {
     if (array == GL_VERTEX_WEIGHT_ARRAY_EXT)
         vw.arrayOn = 1;
-    else if (array != GL_VERTEX_ARRAY_RANGE_NV)
+    else if (array != GL_VERTEX_ARRAY_RANGE_NV && array != GL_VERTEX_ARRAY_RANGE_WITHOUT_FLUSH_NV)
         realEnableClientState(array);
 }
 
@@ -1079,7 +1092,7 @@ __attribute__((force_align_arg_pointer)) static void disableClientState(GLenum a
 {
     if (array == GL_VERTEX_WEIGHT_ARRAY_EXT)
         vw.arrayOn = 0;
-    else if (array != GL_VERTEX_ARRAY_RANGE_NV)
+    else if (array != GL_VERTEX_ARRAY_RANGE_NV && array != GL_VERTEX_ARRAY_RANGE_WITHOUT_FLUSH_NV)
         realDisableClientState(array);
 }
 

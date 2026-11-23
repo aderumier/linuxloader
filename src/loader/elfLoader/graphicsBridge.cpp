@@ -70,7 +70,8 @@ namespace GraphicsBridge
         MAP("glutSolidCube", bridgeGlutSolidCube);
         MAP("glutVisibilityFunc", bridgeGlutVisibilityFunc);
         MAP("glutExtensionSupported", bridgeGlutExtensionSupported);
-        // MAP("glutGetModifiers", bridgeGlutGetModifiers);
+        MAP("glutGetModifiers", bridgeGlutGetModifiers);
+        MAP("glutSetWindow", bridgeGlutSetWindow);
 
         MAP("gluPerspective", bridgegluPerspective);
         MAP("gluLookAt", bridgegluLookAt);
@@ -175,6 +176,7 @@ namespace GraphicsBridge
         MAP("XEventsQueued", bridgeXEventsQueued);
         MAP("XPeekEvent", bridgeXPeekEvent);
         MAP("XMaskEvent", bridgeXMaskEvent);
+        MAP("XIfEvent", bridgeXIfEvent);
         MAP("XCreateSimpleWindow", bridgeXCreateSimpleWindow);
         MAP("XRaiseWindow", bridgeXRaiseWindow);
         MAP("XIconifyWindow", bridgeXIconifyWindow);

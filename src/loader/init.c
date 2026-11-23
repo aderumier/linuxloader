@@ -452,10 +452,10 @@ void initMain(char *configPath, char *controlsPath)
     // Cosmodog games too (see cosmodog/cosmodog.c).
     if (isCosmodogGame() && cosmodogInit() != 0)
         exit(1);
+#endif
     // Gaelco games too (see gaelco/gaelco.c).
     if (isGaelcoGame() && gaelcoInit() != 0)
         exit(1);
-#endif
 
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
     {

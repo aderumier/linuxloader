@@ -1534,6 +1534,24 @@ extern "C" void __attribute__((cdecl)) wrap_glTexGeni(GLenum coord, GLenum pname
         glad_glTexGeni(coord, pname, param);
 }
 
+extern "C" void __attribute__((cdecl)) wrap_glTexGenf(GLenum coord, GLenum pname, GLfloat param)
+{
+    if (glad_glTexGenf)
+        glad_glTexGenf(coord, pname, param);
+}
+
+extern "C" void __attribute__((cdecl)) wrap_glLoadMatrixd(const GLdouble *m)
+{
+    if (glad_glLoadMatrixd)
+        glad_glLoadMatrixd(m);
+}
+
+extern "C" void __attribute__((cdecl)) wrap_glRasterPos4f(GLfloat x, GLfloat y, GLfloat z, GLfloat w)
+{
+    if (glad_glRasterPos4f)
+        glad_glRasterPos4f(x, y, z, w);
+}
+
 extern "C" void __attribute__((cdecl)) wrap_glTexGenfv(GLenum coord, GLenum pname, const GLfloat *params)
 {
     if (glad_glTexGenfv)
@@ -2684,6 +2702,12 @@ void *GLHooks_RealGlProc(const char *procName)
         return (void *)&wrap_glLoadIdentity;
     if (strcmp(procName, "glLoadMatrixf") == 0)
         return (void *)&wrap_glLoadMatrixf;
+    if (strcmp(procName, "glLoadMatrixd") == 0)
+        return (void *)&wrap_glLoadMatrixd;
+    if (strcmp(procName, "glTexGenf") == 0)
+        return (void *)&wrap_glTexGenf;
+    if (strcmp(procName, "glRasterPos4f") == 0)
+        return (void *)&wrap_glRasterPos4f;
     if (strcmp(procName, "glLoadProgramNV") == 0)
         return (void *)&wrap_glLoadProgramNV;
     if (strcmp(procName, "glLoadTransposeMatrixf") == 0)
@@ -3337,6 +3361,12 @@ void *GLHooks_GetProcAddress(const char *procName)
         return (void *)&wrap_glLoadIdentity;
     if (strcmp(procName, "glLoadMatrixf") == 0)
         return (void *)&wrap_glLoadMatrixf;
+    if (strcmp(procName, "glLoadMatrixd") == 0)
+        return (void *)&wrap_glLoadMatrixd;
+    if (strcmp(procName, "glTexGenf") == 0)
+        return (void *)&wrap_glTexGenf;
+    if (strcmp(procName, "glRasterPos4f") == 0)
+        return (void *)&wrap_glRasterPos4f;
     if (strcmp(procName, "glLoadProgramNV") == 0)
         return (void *)&wrap_glLoadProgramNV;
     if (strcmp(procName, "glLoadTransposeMatrixf") == 0)

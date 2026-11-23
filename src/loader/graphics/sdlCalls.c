@@ -131,6 +131,10 @@ SDL_DisplayID getTargetDisplayID()
 void startSDL()
 {
     creatingWindow = true;
+    // The Raw Thrills glut games on Windows (Big Buck Safari) open their
+    // window through the GLUT bridge without the Lindbergh path's initSDL.
+    if (!SDL_WasInit(SDL_INIT_VIDEO) && initSDL() != 0)
+        exit(EXIT_FAILURE);
     SDL_DisplayID targetDisplay = getTargetDisplayID();
 
     const SDL_DisplayMode *displayMode = SDL_GetCurrentDisplayMode(targetDisplay);
@@ -224,6 +228,16 @@ void startSDL()
     // against it and drop frames.
     if (getConfig()->fpsLimiter)
         SDL_GL_SetSwapInterval(0);
+
+#ifdef _WIN32
+    // Loaded by the GPU detection on the Lindbergh path, which the Raw
+    // Thrills glut games skip.
+    if (!glad_glClear)
+    {
+        extern GLADapiproc gladGlLoader(const char *);
+        gladLoadGL((GLADloadfunc)gladGlLoader);
+    }
+#endif
 
     if (getConfig()->showDebugMessages)
     {

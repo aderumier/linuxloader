@@ -348,6 +348,20 @@ int gaelcoInit(void)
         detourFunction((size_t)indicatorInit, intelCpuIndicatorInit);
     }
 
+#ifdef _WIN32
+    // Intel's runtime in Ring Riders and Tuning Race has its own unwinder,
+    // whose frame list _init fills through the executable's PLT import of
+    // its own __register_frame_info: ld.so binds the executable's
+    // definition, the loader's resolver its libgcc's (the list stayed empty,
+    // the first exception aborted).
+    static const char *const frameInfoCalls[] = {"__register_frame_info", "__deregister_frame_info"};
+    for (size_t i = 0; i < sizeof(frameInfoCalls) / sizeof(frameInfoCalls[0]); i++)
+    {
+        void *own = findStaticFnAddr(frameInfoCalls[i]);
+        if (own)
+            hookExecutableImport(frameInfoCalls[i], own);
+    }
+#endif
     if (hookExecutableImport("pthread_getschedparam", (void *)gameGetSchedParam))
         *(void **)&realGetSchedParam = importTarget("pthread_getschedparam");
     if (hookExecutableImport("pthread_setschedparam", (void *)gameSetSchedParam))

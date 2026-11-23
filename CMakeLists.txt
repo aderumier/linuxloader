@@ -274,11 +274,14 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
         src/loader/roxor/*.c
         src/loader/rawthrills/*.c
         src/loader/namco/*.c
+        src/loader/gaelco/*.c
         src/loader/common/gamePath.c
         src/loader/common/alignedCall.c
         src/loader/common/desktopInput.c
         src/loader/common/importHook.c
         src/loader/common/ossDsp.c
+        src/loader/common/nvGl.c
+        src/loader/common/nvProgram.c
         src/loader/common/webcamWin.c
         src/loader/graphics/shaderWork/*.c
         src/loader/elfLoader/*.cpp
@@ -291,6 +294,8 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
     # WMMT4 (its in-loader server, POSIX sockets) and Gundam (WIP on Linux)
     # are not ported yet.
     list(FILTER SRC_FILES EXCLUDE REGEX "namcoEs1Wmmt4|namcoEs1Gundam")
+    # glibc's errno for the Gaelco executables: the resolver answers it here.
+    list(FILTER SRC_FILES EXCLUDE REGEX "gaelcoErrno")
 
     # Executable target
     add_executable(linuxloader ${SRC_FILES})

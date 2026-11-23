@@ -11,9 +11,7 @@
 #include "../log/log.h"
 #include "../patching/patchResolution.h"
 #include "sdlCalls.h"
-#ifdef __linux__
 #include "../gaelco/gaelcoGame.h"
-#endif
 // #include "glInitFunctions.h"
 
 #define CHECK_GL(msg)                                                                                                                      \
@@ -210,7 +208,6 @@ void blitSetWidthandHeightSize()
         blitWidth = 512;
         blitHeight = 384;
     }
-#ifdef __linux__
     // The Gaelco games draw at their own size (640x480, Tuning Race's
     // 720x540), whatever their window's.
     else if (gaelcoGetGame(gId))
@@ -218,7 +215,6 @@ void blitSetWidthandHeightSize()
         blitWidth = gaelcoGetGame(gId)->frameWidth;
         blitHeight = gaelcoGetGame(gId)->frameHeight;
     }
-#endif
     else if (gId == QUIZ_AXA_SBMS || gId == QUIZ_AXA_SBUR_LIVE || gId == MJ4_SBPN_REVG || gId == MJ4_EVO_SBTA)
     {
         blitWidth = 1024;

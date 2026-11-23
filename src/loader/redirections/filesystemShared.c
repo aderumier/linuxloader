@@ -343,6 +343,9 @@ int sharedOpen(const char *pathname, int flags, ...)
         return webcamOpen(pathname, flags, mode, (int (*)(const char *, int, ...))_open);
     if (randomIsPath(pathname))
         return randomOpen();
+    // Raw Thrills: the OSS sound device (Big Buck Safari's).
+    if (ossDspIsPath(pathname))
+        return ossDspOpen(flags);
 #endif
     char pathBuf[PATH_MAX];
     pathname = gameRedirectPath(pathname, pathBuf, sizeof(pathBuf));
@@ -856,6 +859,8 @@ int sharedClose(int fd)
 #ifdef _WIN32
     webcamClose(fd);
     randomClose(fd);
+    if (ossDspIsFd(fd))
+        ossDspClose();
     if (namcoEs1JvsIsFd(fd))
         namcoEs1JvsClose();
     if (namcoEs1KickbackIsFd(fd))
@@ -1135,6 +1140,8 @@ ssize_t sharedWrite(int fd, const void *buf, size_t count)
         return namcoN2KickbackWrite(buf, count);
 #endif
 #ifdef _WIN32
+    if (ossDspIsFd(fd))
+        return ossDspWrite(buf, count);
     if (namcoEs1JvsIsFd(fd))
         return namcoEs1JvsWrite(buf, count);
     if (namcoEs1KickbackIsFd(fd))
@@ -1288,6 +1295,8 @@ int sharedIoctl(int fd, unsigned long int request, ...)
         return 0;
 #endif
 #ifdef _WIN32
+    if (ossDspIsFd(fd))
+        return ossDspIoctl(request, argp);
     if (webcamIsFd(fd))
         return webcamIoctl(fd, request, argp);
     if (namcoEs1JvsIsFd(fd))

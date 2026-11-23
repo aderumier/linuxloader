@@ -312,7 +312,10 @@ static void rebindImportsWindows(void)
 
         if (!strcmp(name, "dlsym"))
             *slots[i] = (uint32_t)(uintptr_t)gameDlsym;
-        else if (name[0] == 'g' && name[1] == 'l' && strcmp(name, "glShaderSource"))
+        else if (!strcmp(name, "glXGetProcAddressARB") || !strcmp(name, "glXGetProcAddress"))
+            *slots[i] = (uint32_t)(uintptr_t)rtGlxGetProcAddress;
+        // glX and glut stay the loader's bridges, as for a dump's imports.
+        else if (isGlName(name) && strcmp(name, "glShaderSource"))
             *slots[i] = (uint32_t)(uintptr_t)((next = rtOverride(name)) ? next : rtGlImport(name));
         else
         {

@@ -24,8 +24,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+// glad's entry points, loaded with the loader's window
+#include <glad/gl.h>
+#else
 #include <GL/gl.h>
 #include <GL/glext.h>
+#endif
 
 #include "nvGl.h"
 #include "../log/log.h"

@@ -129,6 +129,7 @@ extern "C" {
     int bridgeXEventsQueued(Display *dpy, int mode);
     int bridgeXPeekEvent(Display *dpy, XEvent *event_return);
     int bridgeXMaskEvent(Display *dpy, long event_mask, int event_type);
+    int bridgeXIfEvent(Display *dpy, XEvent *event, int (*predicate)(Display *, XEvent *, char *), char *arg);
     Window bridgeXCreateSimpleWindow(Display *dpy, Window parent, int x, int y, unsigned int width, unsigned int height,
                                      unsigned int border_width, unsigned long border_pixel, unsigned long background_pixel);
     int bridgeXRaiseWindow(Display *dpy, Window w);

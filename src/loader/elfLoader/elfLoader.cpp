@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <windows.h>
@@ -31,6 +32,9 @@ void ElfLoader::SetMainStackSize(uint32_t size)
 }
 
 static std::vector<void *> s_PendingEhFrames;
+
+// The executable's .symtab functions and data (see ExportSymbols).
+static std::unordered_map<std::string, void *> g_StaticSymbols;
 
 void ElfLoader::RegisterAllEhFrames()
 {
@@ -1074,6 +1078,10 @@ bool ElfLoader::ExportSymbols()
                     void *symbolAddr = reinterpret_cast<void *>(value + m_LoadBias);
                     SymbolResolver::GetInstance().RegisterNativeSymbol(symbolName, symbolAddr);
                 }
+                // The executable's functions and data by name, for the
+                // loader's patches (findStaticFnAddr), not for its imports.
+                if (value != 0 && shndx != 0 && (type == STT_FUNC || type == STT_OBJECT) && !m_IsSharedObject)
+                    g_StaticSymbols.emplace(symbolName, reinterpret_cast<void *>(value + m_LoadBias));
             }
         }
     }
@@ -1635,8 +1643,14 @@ bool ElfLoader::Execute(int argc, char **argv, char **envp)
 
 extern "C" void *GetStaticFunctionAddress(const char *name)
 {
+    auto it = g_StaticSymbols.find(name);
+    if (it != g_StaticSymbols.end())
+        return it->second;
     std::string moduleName;
     void *result = SymbolResolver::GetInstance().ResolveSymbol(name, &moduleName);
+    // A name nobody has: not the resolver's crash stub for an import.
+    if (moduleName == "UNRESOLVED_STUB")
+        return NULL;
     if (!result)
     {
         log_error("Failed to resolve symbol: %s\n", name);

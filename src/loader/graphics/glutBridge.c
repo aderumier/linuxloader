@@ -67,8 +67,10 @@ void bridgeGlutMainLoop(void)
         SDL_GetWindowSize(g_SdlWindow, &w, &h);
         if (g_displayFunc && g_redisplayNeeded)
         {
-            (((void *(*)(void))g_displayFunc)());
+            // Cleared first, as freeglut does: a display callback that
+            // posts the next redisplay itself (Big Buck Safari's) keeps it.
             g_redisplayNeeded = false;
+            (((void *(*)(void))g_displayFunc)());
         }
         if (reshapeFunc)
             (((void *(*)(int, int))reshapeFunc)(w, h));
@@ -238,6 +240,12 @@ int bridgeGlutGetModifiers(void)
 #else
     return 0;
 #endif
+}
+
+// One window, the SDL one: always current.
+void bridgeGlutSetWindow(int window)
+{
+    (void)window;
 }
 
 void bridgeGlutIgnoreKeyRepeat(int repeat)

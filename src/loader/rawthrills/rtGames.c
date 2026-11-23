@@ -1,6 +1,11 @@
 #include <SDL3/SDL_gamepad.h>
 #include <stdint.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <sys/mman.h>
+#endif
 #include "rtGame.h"
 #include "../config/config.h"
 #include "../hardware/lindbergh/jvs.h"
@@ -1613,11 +1618,20 @@ static void bbsInstall(const RtGame *game)
     {
         uint8_t *p = (uint8_t *)jumps[i];
         uintptr_t page = (uintptr_t)p & ~(uintptr_t)0xfff;
+#ifdef _WIN32
+        DWORD old;
+        if (p[0] != 0x0f || p[1] != 0x84 || !VirtualProtect((void *)page, 0x2000, PAGE_EXECUTE_READWRITE, &old))
+            continue;
+        p[0] = 0x90;
+        p[1] = 0xe9;
+        VirtualProtect((void *)page, 0x2000, old, &old);
+#else
         if (p[0] != 0x0f || p[1] != 0x84 || mprotect((void *)page, 0x2000, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
             continue;
         p[0] = 0x90;
         p[1] = 0xe9;
         mprotect((void *)page, 0x2000, PROT_READ | PROT_EXEC);
+#endif
     }
 }
 

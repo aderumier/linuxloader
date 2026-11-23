@@ -31,6 +31,21 @@ void *hookExecutableImport(const char *name, void *replacement)
         }
     return bridgeHookImport(name, replacement);
 }
+
+void *bridgeResolveSymbol(const char *symbolName);
+
+// The resolver's answer: the loader's bridge of that name (its cdecl GL
+// passthroughs, its glX), else its libraries'.
+void *importTarget(const char *name)
+{
+    return bridgeResolveSymbol(name);
+}
+
+// The Win32 ABI keeps the stack 4-byte aligned only: the loader's code and
+// the system's DLLs realign it where they need to.
+void alignExecutableImports(void)
+{
+}
 #else
 #include <dlfcn.h>
 #include <elf.h>

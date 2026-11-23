@@ -3,6 +3,7 @@
 #include "filesystemBridge.hpp"
 #include "libcBridge.hpp"
 #include "symbolResolver.hpp"
+#include "memoryManager.hpp"
 #include "../log/log.h"
 #include <string>
 #include <windows.h>
@@ -92,6 +93,8 @@ namespace FileSystemBridge
         MAP("readdir_r", bridgeReaddir_r);
         MAP("readdir64_r", bridgeReaddir64_r);
         MAP("closedir", bridgeClosedir);
+        MAP("scandir", bridgeScandir);
+        MAP("alphasort", bridgeAlphasort);
         MAP("clearerr", clearerr);
 
         MAP("unlink", bridgeUnlink);
@@ -502,6 +505,41 @@ extern "C"
         }
         *result = entry;
         return 0;
+    }
+
+    // scandir: the entries and their list in the game's heap, which frees
+    // them (Gaelco Championship Tuning Race's record files).
+    int bridgeScandir(const char *name, struct linux_dirent ***namelist,
+                      int (*filter)(const struct linux_dirent *),
+                      int (*compar)(const struct linux_dirent **, const struct linux_dirent **))
+    {
+        void *dirp = bridgeOpendir(name);
+        if (!dirp)
+            return -1;
+        struct linux_dirent **list = NULL;
+        int count = 0, capacity = 0;
+        for (struct linux_dirent *ent; (ent = bridgeReaddir(dirp));)
+        {
+            if (filter && !filter(ent))
+                continue;
+            if (count == capacity)
+            {
+                capacity = capacity ? capacity * 2 : 16;
+                list = (struct linux_dirent **)MemoryManager::customRealloc(list, capacity * sizeof(*list));
+            }
+            list[count] = (struct linux_dirent *)MemoryManager::customMalloc(sizeof(struct linux_dirent));
+            memcpy(list[count++], ent, sizeof(struct linux_dirent));
+        }
+        bridgeClosedir(dirp);
+        if (compar && count > 1)
+            qsort(list, count, sizeof(*list), (int (*)(const void *, const void *))compar);
+        *namelist = list;
+        return count;
+    }
+
+    int bridgeAlphasort(const struct linux_dirent **a, const struct linux_dirent **b)
+    {
+        return strcmp((*a)->d_name, (*b)->d_name);
     }
 
     int bridgeClosedir(void *dirp)

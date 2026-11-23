@@ -203,6 +203,9 @@ extern "C"
     int bridgeReaddir_r(void *dirp, struct linux_dirent *entry, struct linux_dirent **result);
     int bridgeReaddir64_r(void *dirp, struct linux_dirent64 *entry, struct linux_dirent64 **result);
     int bridgeClosedir(void *dirp);
+    int bridgeScandir(const char *name, struct linux_dirent ***namelist, int (*filter)(const struct linux_dirent *),
+                      int (*compar)(const struct linux_dirent **, const struct linux_dirent **));
+    int bridgeAlphasort(const struct linux_dirent **a, const struct linux_dirent **b);
 
     int bridgeUnlink(const char *pathname);
     int bridgeRename(const char *oldpath, const char *newpath);

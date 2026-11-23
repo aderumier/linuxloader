@@ -11,7 +11,7 @@
 #include "gamePath.h"
 #include "../teamplay/teamplay.h"
 // Compiled on both hosts (see the ports): only Global VR, Cecropia, IGS, Cosmodog,
-// Paokai, IT and Gaelco are Linux-only.
+// Paokai and IT are Linux-only.
 #include "../rawthrills/rawthrills.h"
 #include "../namco/namcoEs1.h"
 #include "../namco/namcoN2.h"
@@ -25,13 +25,13 @@
 #include "../cosmodog/cosmodog.h"
 #include "../paokai/paokai.h"
 #include "../itech/itech.h"
-#include "../gaelco/gaelco.h"
 #endif
+#include "../gaelco/gaelco.h"
 
 // The running game's cabinet paths mapped to their host location, by its
 // system (Raw Thrills, Namco ES1 and N2, Teamplay, Global VR, Roxor, Cecropia,
 // IGS, Cosmodog): path, or buf holding the mapped one. The systems compiled in on the host's: Linux,
-// all of them; Windows, Teamplay (see the family's port).
+// all of them; Windows, Teamplay and Gaelco (see the families' ports).
 const char *gameRedirectPath(const char *path, char *buf, size_t size)
 {
     if (!path)
@@ -53,9 +53,9 @@ const char *gameRedirectPath(const char *path, char *buf, size_t size)
         return paokaiRedirectPath(path, buf, size);
     if (isItechGame())
         return itechRedirectPath(path, buf, size);
+#endif
     if (isGaelcoGame())
         return gaelcoRedirectPath(path, buf, size);
-#endif
     if (isRoxorGame())
         return roxorRedirectPath(path, buf, size);
     if (isNamcoEs1Game())

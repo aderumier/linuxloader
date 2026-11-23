@@ -590,6 +590,50 @@ int bridgeXMaskEvent(Display *dpy, long event_mask, int event_type)
     return 0;
 }
 
+// Games waiting for their window's MapNotify after XMapWindow (Tokyo Cop:
+// XIfEvent with a predicate): they get the events a window just mapped
+// would, the first one their predicate takes (as on Linux). Xlib's i386
+// layouts, in words: type, serial, send_event, display, then the event's.
+int bridgeXIfEvent(Display *dpy, XEvent *event, int (*predicate)(Display *, XEvent *, char *), char *arg)
+{
+    extern int blitWidth, blitHeight, gWidth, gHeight;
+    const long window = (long)getSDLWindow();
+    const int width = blitWidth > 0 ? blitWidth : gWidth, height = blitHeight > 0 ? blitHeight : gHeight;
+
+    for (int i = 0; i < 4; i++)
+    {
+        memset(event, 0, sizeof(*event));
+        event->xany.display = dpy;
+        switch (i)
+        {
+        case 0: // MapNotify: event, window
+            event->type = 19;
+            event->pad[4] = event->pad[5] = window;
+            break;
+        case 1: // Expose: window, x, y, width, height
+            event->type = 12;
+            event->pad[4] = window;
+            event->pad[7] = width;
+            event->pad[8] = height;
+            break;
+        case 2: // ConfigureNotify: event, window, x, y, width, height
+            event->type = 22;
+            event->pad[4] = event->pad[5] = window;
+            event->pad[8] = width;
+            event->pad[9] = height;
+            break;
+        default: // VisibilityNotify: window, state (unobscured)
+            event->type = 15;
+            event->pad[4] = window;
+            break;
+        }
+        if (predicate(dpy, event, arg))
+            return 0;
+    }
+    log_warn("XIfEvent: the game waits for an event the loader's window does not send");
+    return 0;
+}
+
 Window bridgeXCreateSimpleWindow(Display *dpy, Window parent, int x, int y, unsigned int width, unsigned int height,
                                  unsigned int border_width, unsigned long border_pixel, unsigned long background_pixel)
 {

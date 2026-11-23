@@ -148,6 +148,29 @@ namespace RtBridge
         char buf[4096];
         const char *cmd = rtRedirectCommand(command, buf, sizeof(buf));
         log_info("Intercepted system: %s", cmd);
+        // The cmgr IR gun manager's scan for its USB serial cameras (Big Buck
+        // Safari), "find /sys/devices/ ... > list" then "rm list": Windows'
+        // find reads stdin forever. The list is empty, as on a desktop.
+        if (!strncmp(cmd, "find /sys/", 10))
+        {
+            const char *out = strrchr(cmd, '>');
+            if (!out)
+                return 0;
+            for (out++; *out == ' '; out++)
+                ;
+            FILE *f = fopen(out, "w");
+            if (f)
+                fclose(f);
+            return 0;
+        }
+        if (!strncmp(cmd, "rm ", 3))
+        {
+            const char *path = cmd + 3;
+            if (!strncmp(path, "-f ", 3))
+                path += 3;
+            remove(path);
+            return 0;
+        }
         return system(cmd);
     }
 

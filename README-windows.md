@@ -4,9 +4,12 @@ This fork (branch `rawthrills-windows`) runs the PC-based Raw Thrills arcade
 games on Windows. `linuxloader.exe` loads the game's Linux executable into its
 own process, so no Linux, Wine or virtual machine is needed.
 
-Tested on Windows: Cruis'n Blast (v1.25), Jurassic Park, The Walking Dead, and
-Big Buck HD Wild (v08.29 and v08.40), and the 64-bit Centipede Chaos and
-Halo: Fireteam Raven, run by `linuxloader64.exe`.
+Tested on Windows: Cruis'n Blast (v1.25), Jurassic Park, The Walking Dead,
+Big Buck HD Wild (v08.29 and v08.40) and Big Buck Safari, and the 64-bit
+Centipede Chaos and Halo: Fireteam Raven, run by `linuxloader64.exe`. The
+Gaelco games (Tokyo Cop, Ring Riders, Gaelco Championship Tuning Race) run
+too; Ring Riders' and Tuning Race's dumps are the cabinet's whole disk, the
+game in `home\joc2001\<game>\salidas`.
 
 ## Install
 
@@ -28,6 +31,10 @@ linuxloader\
   run-twd.bat       games\The Walking Dead\
   run-bbhd.bat      games\Big Buck HD Wild\
   run-bbhd840.bat   games\Big Buck HD Wild 8.40\
+  run-bbs.bat       games\Big Buck Safari\
+  run-tc.bat        games\Tokyo Cop\
+  run-rr.bat        games\Ring Riders\ (the whole disk)
+  run-gctr.bat      games\Gaelco Championship Tuning Race\ (the whole disk)
   examples\linuxloader.ini, jp.ini
 ```
 

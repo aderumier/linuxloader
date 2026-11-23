@@ -24,24 +24,20 @@ typedef struct
     int fragments;
     int bytes;
 } audio_buf_info;
-#define AFMT_S16_LE 0x0008
-#define AFMT_U8 0x0020
-#define _IOC(dir, t, nr, sz) (((dir) << 30) | ((t) << 8) | ((nr) << 0) | ((sz) << 16))
-#define _IO(t, nr) _IOC(0, (t), (nr), 0)
-#define _IOR(t, nr, sz) _IOC(2, (t), (nr), sizeof(sz))
-#define _IOW(t, nr, sz) _IOC(1, (t), (nr), sizeof(sz))
-#define _IOWR(t, nr, sz) _IOC(3, (t), (nr), sizeof(sz))
-#define SNDCTL_DSP_RESET _IOW('A', 0x00, int)
-#define SNDCTL_DSP_SYNC _IO('A', 0x01)
-#define SNDCTL_DSP_SPEED _IOWR('A', 0x02, int)
-#define SNDCTL_DSP_STEREO _IOWR('A', 0x03, int)
-#define SNDCTL_DSP_SETFMT _IOWR('A', 0x04, int)
-#define SNDCTL_DSP_GETFMTS _IOR('A', 0x05, int)
-#define SNDCTL_DSP_CHANNELS _IOWR('A', 0x06, int)
-#define SNDCTL_DSP_GETBLKSIZE _IO('A', 0x07)
-#define SNDCTL_DSP_SETFRAGMENT _IOWR('A', 0x08, int)
-#define SNDCTL_DSP_GETOSPACE _IOR('A', 0x09, audio_buf_info)
-#define SNDCTL_DSP_GETODELAY _IOR('A', 0x0a, int)
+// <sys/soundcard.h>'s values (i386).
+#define AFMT_U8 0x00000008
+#define AFMT_S16_LE 0x00000010
+#define SNDCTL_DSP_RESET 0x00005000
+#define SNDCTL_DSP_SYNC 0x00005001
+#define SNDCTL_DSP_SPEED 0xc0045002
+#define SNDCTL_DSP_STEREO 0xc0045003
+#define SNDCTL_DSP_GETBLKSIZE 0xc0045004
+#define SNDCTL_DSP_SETFMT 0xc0045005
+#define SNDCTL_DSP_CHANNELS 0xc0045006
+#define SNDCTL_DSP_SETFRAGMENT 0xc004500a
+#define SNDCTL_DSP_GETFMTS 0x8004500b
+#define SNDCTL_DSP_GETOSPACE 0x8010500c
+#define SNDCTL_DSP_GETODELAY 0x80045017
 #endif
 #include <unistd.h>
 
