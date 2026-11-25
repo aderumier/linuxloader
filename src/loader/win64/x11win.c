@@ -1667,8 +1667,9 @@ static SYSV void glxSwapBuffers(void *d, Drawable id)
     if (glErrors < 0)
         glErrors = getenv("LL64_GLERR") != NULL;
     presented = w;
+    // Drawn over the game's frame, before it is scaled to the window.
     if (lxSwapHook)
-        lxSwapHook(w->width, w->height);
+        lxSwapHook(w->gameWidth ? w->gameWidth : w->width, w->gameHeight ? w->gameHeight : w->height);
     if (glErrors)
     {
         static int shown;

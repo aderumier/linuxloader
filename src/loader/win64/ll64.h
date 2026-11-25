@@ -115,5 +115,8 @@ int lxKeyHeld(int vk);
 int lxGameFocused(void);
 // The cursor on the game's picture, 0..1 from its top left: 0 when off it.
 int lxGamePointer(float *x, float *y);
+// Called on the GL thread just before each frame is presented, the window's
+// framebuffer bound, with the game's frame size (overlays: Minecraft's binder).
+extern void (*lxSwapHook)(int width, int height);
 
 #endif

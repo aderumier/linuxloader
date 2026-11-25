@@ -24,14 +24,27 @@ if((WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw") AND CMAKE_SIZEOF_VOID_P 
         src/loader/config/iniParser.c
         src/loader/rawthrills/g7/g7Games.c
     )
-    add_executable(linuxloader64 ${LOADER64_SRC})
+    add_executable(linuxloader64 ${LOADER64_SRC}
+        # Minecraft's card binder, drawn with Dear ImGui (MIT) over the frame
+        src/loader/rawthrills/g7/g7McdBinder.cpp
+        src/glad/src/gl.c
+        src/imgui/imgui.cpp
+        src/imgui/imgui_draw.cpp
+        src/imgui/imgui_tables.cpp
+        src/imgui/imgui_widgets.cpp
+        src/imgui/imgui_impl_opengl3.cpp)
     set_property(TARGET linuxloader64 PROPERTY C_STANDARD 11)
-    target_compile_definitions(linuxloader64 PRIVATE __USE_MINGW_ANSI_STDIO=1 _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    target_compile_definitions(linuxloader64 PRIVATE __USE_MINGW_ANSI_STDIO=1 _WIN32_WINNT=0x0A00 WINVER=0x0A00
+        IMGUI_DISABLE_DEMO_WINDOWS IMGUI_DISABLE_DEBUG_TOOLS OVERLAY_FONT_PATH=${PROJECT_SOURCE_DIR}/src/fonts/cozette.ttf)
+    target_include_directories(linuxloader64 PRIVATE ${PROJECT_SOURCE_DIR}/src/glad/include
+        ${PROJECT_SOURCE_DIR}/src/imgui ${PROJECT_SOURCE_DIR}/src/stb)
     target_compile_options(linuxloader64 PRIVATE -O2 -fno-strict-aliasing -Wall -Wno-unused-parameter -Wno-unused-function
         -Wno-format-truncation)
+    target_compile_options(linuxloader64 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>)
     # The main thread only waits: a small stack, out of the way of the
-    # addresses the game's executable takes (see main64.c).
-    target_link_options(linuxloader64 PRIVATE -s -Wl,--stack,1048576)
+    # addresses the game's executable takes (see main64.c). The C++ runtime
+    # and winpthreads (the binder's) linked in: no MinGW DLL beside the exe.
+    target_link_options(linuxloader64 PRIVATE -s -Wl,--stack,1048576 -static)
     target_link_libraries(linuxloader64 bcrypt advapi32 gdi32 opengl32 winmm)
     return()
 endif()

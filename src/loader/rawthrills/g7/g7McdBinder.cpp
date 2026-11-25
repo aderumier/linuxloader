@@ -15,7 +15,9 @@
 // The card art (373x526 PNGs named by card code, as Ultra Loader's
 // binder_art) is read from dump/binder_art beside the dongle answers, or
 // MCD_CARD_ART; a card without art gets a drawn tile.
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -46,18 +48,30 @@
 #include "g7McdBinder.h"
 
 extern "C" const char *g7DumpDir(void);
+#ifdef _WIN32
+// The pointer over the game's frame, in its pixels (win64/g7MinecraftWin.c).
+extern "C" int mcdPointer(int width, int height, float *x, float *y, int *button);
+#endif
 
 #define binderLog(...) fprintf(stderr, "g7_rt: minecraft: " __VA_ARGS__)
 
 // The Cozette font (MIT, src/fonts), in the library.
 #define FONT_STR2(x) #x
 #define FONT_STR(x) FONT_STR2(x)
-__asm__(".section .rodata\n"
+#ifdef _WIN32
+// PE: no .previous; the compiler names its own sections after this
+#define FONT_SECTION ".section .rdata,\"dr\"\n"
+#define FONT_SECTION_END ".text\n"
+#else
+#define FONT_SECTION ".section .rodata\n"
+#define FONT_SECTION_END ".previous\n"
+#endif
+__asm__(FONT_SECTION
         ".balign 16\n"
         "mcdCozetteTtf:\n"
         ".incbin \"" FONT_STR(OVERLAY_FONT_PATH) "\"\n"
         "mcdCozetteTtfEnd:\n"
-        ".previous\n");
+        FONT_SECTION_END);
 extern "C" const unsigned char mcdCozetteTtf[], mcdCozetteTtfEnd[];
 static const float COZETTE_SIZE = 13.0f;
 
@@ -1027,8 +1041,10 @@ static bool setUp(void)
 {
     for (int i = 0; i < CARD_COUNT; i++)
         tabCards[cards[i].kind][tabCount[cards[i].kind]++] = i;
+#ifndef _WIN32
     void *x11 = dlopen("libX11.so.6", RTLD_NOW);
     queryPointer = x11 ? (QueryPointerFn)dlsym(x11, "XQueryPointer") : NULL;
+#endif
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1080,6 +1096,17 @@ extern "C" void mcdBinderDraw(void *display, unsigned long drawable, int W, int 
     lastTime = t;
     io.DisplaySize = ImVec2((float)W, (float)H);
     io.DisplayFramebufferScale = ImVec2(1, 1);
+#ifdef _WIN32
+    {
+        float px, py;
+        int button;
+        if (mcdPointer(W, H, &px, &py, &button))
+        {
+            io.AddMousePosEvent(px, py);
+            io.AddMouseButtonEvent(0, button != 0);
+        }
+    }
+#endif
     if (queryPointer && display)
     {
         unsigned long root, child;

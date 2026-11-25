@@ -150,6 +150,10 @@ static DWORD msUntil(const LxTimespec *abs, int clock)
 
 static SYSV int lx_pthread_timedjoin_np(LxThread *t, void **ret, const LxTimespec *abs)
 {
+    // A thread that was never started (Minecraft's webcam threads without a
+    // webcam): no such thread, where glibc would fault.
+    if (!t)
+        return 3; // ESRCH
     if (WaitForSingleObject(t->handle, msUntil(abs, 0)) == WAIT_TIMEOUT)
         return LX_ETIMEDOUT;
     return lx_pthread_join(t, ret);
@@ -157,6 +161,8 @@ static SYSV int lx_pthread_timedjoin_np(LxThread *t, void **ret, const LxTimespe
 
 static SYSV int lx_pthread_tryjoin_np(LxThread *t, void **ret)
 {
+    if (!t)
+        return 3; // ESRCH
     if (WaitForSingleObject(t->handle, 0) == WAIT_TIMEOUT)
         return LX_EBUSY;
     return lx_pthread_join(t, ret);

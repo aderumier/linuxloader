@@ -258,6 +258,7 @@ static void loadConfig(void)
     }
     g7Config.keepAspectRatio = lxIniInt("Display", "KEEP_ASPECT_RATIO", g7Config.keepAspectRatio);
     g7Config.borderEnabled = lxIniInt("Display", "BORDER_ENABLED", 0);
+    g7Config.volume = lxIniInt("Sound", "VOLUME", 0);
     if ((v = lxIniValue("Display", "WHITE_BORDER_PERCENTAGE")))
         g7Config.whiteBorder = (float)atof(v) / 100.f;
     if ((v = lxIniValue("Display", "BLACK_BORDER_PERCENTAGE")))
@@ -265,30 +266,47 @@ static void loadConfig(void)
 }
 
 // ---------------------------------------------------------------------------
-// The dongle (see g7_rt.c).
+// The dongle (see g7_rt.c): its memory file 0xfff4, 0x1f0 bytes; a whole
+// image of it in the dump folder (dongle_memory.bin: Minecraft's card
+// counters) replaces the defaults, but for the cabinet type, and what the game
+// writes is kept in dongle_memory.dmp.
 
-static uint8_t dongleMem[64];
+static uint8_t dongleMem[0x1f0];
 
 int g7CabinetType(void) { return dongleMem[41]; }
+
+const char *g7DumpDir(void) { return dumpDir; }
+
+// That file over the memory, whole or its first bytes (an older, shorter
+// save); 1 if there was one.
+static int dongleMemRead(const char *path)
+{
+    uint8_t saved[sizeof(dongleMem)];
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 0;
+    n = fread(saved, 1, sizeof(saved), f);
+    fclose(f);
+    if (n < 64)
+        return 0;
+    saved[41] = dongleMem[41];
+    memcpy(dongleMem, saved, n);
+    return 1;
+}
 
 static void dongleMemLoad(void)
 {
     uint32_t serial = (uint32_t)g7GameEnv("SERIAL_NO", 1234567);
-    FILE *f;
+    char image[MAX_PATH];
     dongleMem[40] = (uint8_t)g7GameEnv("FACTORY_SETUP", game->factorySetupDone);
     dongleMem[41] = (uint8_t)g7GameEnv("CABINET_TYPE", game->defaultCabinet);
     dongleMem[42] = (uint8_t)g7GameEnv("REGION", 0);
     memcpy(dongleMem + 43, &serial, sizeof(serial));
-    if ((f = fopen(dongleMemPath, "rb")))
-    {
-        uint8_t saved[sizeof(dongleMem)];
-        if (fread(saved, 1, sizeof(saved), f) == sizeof(saved))
-        {
-            saved[41] = dongleMem[41];
-            memcpy(dongleMem, saved, sizeof(saved));
-        }
-        fclose(f);
-    }
+    snprintf(image, sizeof(image), "%s\\dongle_memory.bin", dumpDir);
+    if (dongleMemRead(image))
+        g7Log("dongle memory from %s\n", image);
+    dongleMemRead(dongleMemPath);
 }
 
 SYSV void *lxStrdup(const char *s);
@@ -412,6 +430,56 @@ static SYSV void parseArgs(int argc, char **argv)
     *(float *)(video + 12) = (float)g7Config.width / (float)g7Config.height;
 }
 
+// FMOD Studio's master bus ("bus:/"), held at the game's level ([Sound]
+// VOLUME, else the descriptor's masterVolume): every volume the game gives it
+// scaled by that level (see g7_rt.c).
+#define FMOD_GET_BUS "_ZNK4FMOD6Studio6System6getBusEPKcPPNS0_3BusE"
+#define FMOD_BUS_SET_VOLUME "_ZN4FMOD6Studio3Bus9setVolumeEf"
+static void *masterBus;
+static SYSV int (*realGetBus)(void *, const char *, void **);
+static SYSV int (*realBusSetVolume)(void *, float);
+
+static float masterLevel(void)
+{
+    int percent = g7Config.volume > 0 ? g7Config.volume : game->masterVolume;
+    return percent > 0 ? (float)percent / 100.f : 1.f;
+}
+
+static SYSV int gameBusSetVolume(void *bus, float volume)
+{
+    return realBusSetVolume(bus, bus && bus == masterBus ? volume * masterLevel() : volume);
+}
+
+static SYSV int gameGetBus(void *system, const char *path, void **bus)
+{
+    int r = realGetBus(system, path, bus);
+    if (r == 0 && bus && *bus && path && !strcmp(path, "bus:/") && masterLevel() != 1.f && *bus != masterBus)
+    {
+        masterBus = *bus;
+        gameBusSetVolume(masterBus, 1.f);
+        g7Log("FMOD master bus at %d%%\n", (int)(masterLevel() * 100.f + .5f));
+    }
+    return r;
+}
+
+// An import the runtime answers itself, or NULL.
+static void *importHook(const char *name, void *real)
+{
+    if (!real)
+        return NULL;
+    if (!strcmp(name, FMOD_GET_BUS))
+    {
+        *(void **)&realGetBus = real;
+        return (void *)gameGetBus;
+    }
+    if (!strcmp(name, FMOD_BUS_SET_VOLUME))
+    {
+        *(void **)&realBusSetVolume = real;
+        return (void *)gameBusSetVolume;
+    }
+    return NULL;
+}
+
 static void *dlsymHook(const char *name)
 {
     return g7GameDlsymHook ? g7GameDlsymHook(name) : NULL;
@@ -468,7 +536,7 @@ void lxG7Setup(LxModule *exe)
     for (size_t i = 0; i < game->importCount; i++)
     {
         const G7Import *imp = &game->imports[i];
-        void *p;
+        void *p, *hooked;
         if (!imp->name[0])
             continue;
         if (!(p = lxGlobalSymbol(imp->name)))
@@ -477,6 +545,8 @@ void lxG7Setup(LxModule *exe)
             lxTraceLog("missing import %s@%s (slot %#lx)\n", imp->name, imp->version, imp->slot);
             p = lxUnresolvedStub(imp->name);
         }
+        else if ((hooked = importHook(imp->name, p)))
+            p = hooked;
         *(void **)(uintptr_t)imp->slot = p;
     }
     g7Log("imports rebuilt, %d missing\n", missing);
@@ -518,6 +588,3 @@ int lxG7Args(char **argv, int max)
     g7Log("full screen %dx%d\n", w, h);
     return 1;
 }
-
-// Minecraft Dungeons: its hooks are Linux-only so far.
-void g7MinecraftInstall(const G7Game *g) { g7Log("%s: its own hooks are not ported to Windows\n", g->name); }

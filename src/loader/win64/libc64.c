@@ -560,7 +560,11 @@ void lxExit(int code)
     ExitProcess(code);
 }
 
-static SYSV void lx_exit(int code) { lxExit(code); }
+static SYSV void lx_exit(int code)
+{
+    lxLog("exit(%d) called from %p\n", code, __builtin_return_address(0));
+    lxExit(code);
+}
 static SYSV void lx__exit(int code) { fflush(NULL); ExitProcess(code); }
 static SYSV void lx_abort(void)
 {

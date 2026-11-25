@@ -6,7 +6,8 @@ own process, so no Linux, Wine or virtual machine is needed.
 
 Tested on Windows: Cruis'n Blast (v1.25), Jurassic Park, The Walking Dead,
 Big Buck HD Wild (v08.29 and v08.40) and Big Buck Safari, and the 64-bit
-Centipede Chaos and Halo: Fireteam Raven, run by `linuxloader64.exe`. The
+Centipede Chaos, Halo: Fireteam Raven and Minecraft Dungeons Arcade, run by
+`linuxloader64.exe`. The
 Gaelco games (Tokyo Cop, Ring Riders, Gaelco Championship Tuning Race) run
 too; Ring Riders' and Tuning Race's dumps are the cabinet's whole disk, the
 game in `home\joc2001\<game>\salidas`.
@@ -25,6 +26,7 @@ linuxloader\
   ll-deps64\
   run-centipede.bat games\Centipede Chaos\
   run-halo.bat      games\Halo Fireteam Raven\
+  run-minecraft.bat games\Minecraft Dungeons Arcade\
   setup-wheel.bat
   run-cb.bat        games\Cruis'n Blast\
   run-jp.bat        games\Jurassic Park\
@@ -198,6 +200,28 @@ players 1 to 4, each aiming its gun with the sticks (or the D-pad): right
 trigger or A fires, left trigger, X or LB reload, B, Y or RB the action,
 Start, Back a coin, the right stick's click test, the left's service. Player
 1's pad takes the gun when its stick moves, the mouse when it moves.
+
+## Minecraft Dungeons Arcade
+
+Run by `linuxloader64.exe` (v05.00, TeknoParrot's dump `gamedump.exec`). Its
+folder is the game's one with `lib`, `data`, `pmuser` and `dump`: the dongle's
+recorded answers, `dongle_memory.bin` (the cards it may dispense) and the card
+art in `dump\binder_art`. The folder must be writable (the game keeps its log
+and settings in `pmuser`). `run-minecraft.bat` uses `linuxloader.ini`:
+`FULLSCREEN = 1` renders at `WIDTH` x `HEIGHT` (the screen's by default),
+`[Sound] VOLUME` the level in percent (40 by default: the game is mixed loud).
+
+Four players, MAME's keys: player 1 the arrows and left Ctrl, left Alt, Space,
+player 2 R, F, D, G and A, S, Q, player 3 I, K, J, L and right Ctrl, right
+Shift, Enter, player 4 the keypad's 8, 2, 4, 6 and 0, `.`, `+`; 1 to 4 start,
+5 or 6 coins for players 1 and 2, 7 or 8 for 3 and 4; F2 test, F1 or 9
+service. XInput pads are players 1 to 4: the left stick or the D-pad, A, B
+and X (or Y) the three buttons, Start.
+
+The cabinet scans paper cards with webcams; here F3 to F6 (or Select+Start on
+a pad) open a card binder for player 1 to 4: arrows pick, Space takes a card
+into the hand, Q/E change the kind, Enter scans the hand, Backspace closes (on
+a pad: A, LB/RB, Start, B). Esc or Alt+F4 quits the game.
 
 ## More
 
