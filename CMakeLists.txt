@@ -46,6 +46,48 @@ if((WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw") AND CMAKE_SIZEOF_VOID_P 
     # and winpthreads (the binder's) linked in: no MinGW DLL beside the exe.
     target_link_options(linuxloader64 PRIVATE -s -Wl,--stack,1048576 -static)
     target_link_libraries(linuxloader64 bcrypt advapi32 gdi32 opengl32 winmm)
+
+    # Marvel Contest of Champions on Unity's Windows player (rawthrills/mcoc/win):
+    # mcoc2.exe, the launcher in place of Unity's WindowsPlayer.exe, and
+    # mcocwin.dll, the cabinet's plugins (the Linux ones) and the hooks.
+    add_library(mcocwin SHARED
+        src/loader/rawthrills/mcoc/win/mcocWin.c
+        src/loader/rawthrills/mcoc/win/mcocWinInput.c
+        src/loader/rawthrills/mcoc/win/mcocWinStubs.c
+        src/loader/rawthrills/mcoc/mcocGame.c
+        src/loader/rawthrills/mcoc/mcocPlugins.c
+        src/loader/rawthrills/mcoc/mcocBinder.cpp
+        src/loader/rawthrills/unity/unityRio2.c
+        src/loader/rawthrills/unity/unityMono.c
+        src/loader/config/iniParser.c
+        src/glad/src/gl.c
+        src/imgui/imgui.cpp
+        src/imgui/imgui_draw.cpp
+        src/imgui/imgui_tables.cpp
+        src/imgui/imgui_widgets.cpp
+        src/imgui/imgui_impl_opengl3.cpp
+        src/minhook/src/buffer.c
+        src/minhook/src/hook.c
+        src/minhook/src/trampoline.c
+        src/minhook/src/hde/hde64.c)
+    set_target_properties(mcocwin PROPERTIES PREFIX "" OUTPUT_NAME "mcocwin")
+    target_compile_definitions(mcocwin PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 IMGUI_DISABLE_DEMO_WINDOWS
+        IMGUI_DISABLE_DEBUG_TOOLS OVERLAY_FONT_PATH=${PROJECT_SOURCE_DIR}/src/fonts/cozette.ttf)
+    target_include_directories(mcocwin PRIVATE ${PROJECT_SOURCE_DIR}/src/glad/include ${PROJECT_SOURCE_DIR}/src/imgui
+        ${PROJECT_SOURCE_DIR}/src/stb ${PROJECT_SOURCE_DIR}/src/minhook/include)
+    target_compile_options(mcocwin PRIVATE -O2 -Wall -Wno-unused-parameter -Wno-unused-function -Wno-format-truncation)
+    target_compile_options(mcocwin PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>)
+    # Every plugin entry point exported (Mono looks them up by name), the C++
+    # runtime and winpthreads linked in.
+    target_link_options(mcocwin PRIVATE -s -static -Wl,--export-all-symbols)
+    # SDL 3.4.20's gamepads (libs/win64/libSDL3.a, built from its release with
+    # mingw64.cmake: static, no audio, render, GPU nor camera).
+    target_link_libraries(mcocwin ${PROJECT_SOURCE_DIR}/libs/win64/libSDL3.a opengl32 gdi32 user32 shell32 ole32
+        oleaut32 uuid ws2_32 setupapi hid imm32 version winmm cfgmgr32 advapi32)
+
+    add_executable(mcoc2 WIN32 src/loader/rawthrills/mcoc/win/mcocLauncher.c)
+    target_compile_options(mcoc2 PRIVATE -O2 -Wall -municode)
+    target_link_options(mcoc2 PRIVATE -s -static -municode)
     return()
 endif()
 

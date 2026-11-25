@@ -2,13 +2,21 @@
 // modules reach their managed code through it (their settings, their
 // state, their calibration).
 #define _GNU_SOURCE
-#include <dlfcn.h>
 #include <limits.h>
-#include <link.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
+// Marvel Contest of Champions on Unity's Windows player (mcoc/win): Mono is
+// its mono-2.0-bdwgc.dll.
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define dlsym(h, name) ((void *)GetProcAddress((HMODULE)(h), name))
+#else
+#include <dlfcn.h>
+#include <link.h>
 #include <unistd.h>
+#endif
 #include "unity.h"
 
 typedef void MonoProperty, MonoMethodDesc, MonoAssembly, MonoClassField, MonoVTable, MonoDomain;
@@ -43,6 +51,7 @@ static struct
     void (*free)(void *);
 } mono;
 
+#ifndef _WIN32
 // Mono as loaded: through the dlopen of unityRt.c, else (Unity 2019 and
 // later load it from UnityPlayer.so, past that hook) found among the
 // loaded objects.
@@ -62,15 +71,23 @@ static int findMono(struct dl_phdr_info *info, size_t size, void *found)
     *(void **)found = h;
     return 1;
 }
+#endif
 
 static int monoLoad(void)
 {
     void *h;
     if (mono.invoke)
         return 1;
+#ifdef _WIN32
+    if (!unityMonoHandle)
+        unityMonoHandle = GetModuleHandleA("mono-2.0-bdwgc.dll");
+    if (!(h = unityMonoHandle))
+        return 0;
+#else
     if (!unityMonoHandle)
         dl_iterate_phdr(findMono, &unityMonoHandle);
     h = unityMonoHandle ? unityMonoHandle : RTLD_DEFAULT;
+#endif
     *(void **)&mono.assemblyForeach = dlsym(h, "mono_assembly_foreach");
     *(void **)&mono.assemblyImage = dlsym(h, "mono_assembly_get_image");
     *(void **)&mono.imageName = dlsym(h, "mono_image_get_name");
@@ -149,7 +166,15 @@ MonoImage *unityMonoImage(const char *name)
     if (mono.imageLoaded)
     {
         char exe[PATH_MAX], path[PATH_MAX * 2], *dot;
+#ifdef _WIN32
+        // Mono names its images with forward slashes.
+        long n = (long)GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
+        for (char *c = exe; n > 0 && *c; c++)
+            if (*c == '\\')
+                *c = '/';
+#else
         ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+#endif
         if (n > 0)
         {
             exe[n] = 0;

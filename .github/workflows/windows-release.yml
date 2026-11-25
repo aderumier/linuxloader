@@ -54,6 +54,9 @@ jobs:
         cp -r libs/win32/ll-deps win-release/
         cp build-win64/linuxloader64.exe win-release/
         cp -r libs/win64/ll-deps64 win-release/
+        # Marvel Contest of Champions: copied into its game folder (README)
+        mkdir win-release/mcoc
+        cp build-win64/mcoc2.exe build-win64/mcocwin.dll win-release/mcoc/
         cp scripts/windows/setup-wheel.bat win-release/
         cp README-windows.md win-release/README.md
         cp scripts/windows/run-*.bat win-release/

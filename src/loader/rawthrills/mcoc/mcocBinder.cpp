@@ -15,7 +15,9 @@
 //
 // The card art (PNGs named by card code) is read from dump/binder_art in the
 // game's directory, or MCOC_CARD_ART; a card without art gets a drawn tile.
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -44,18 +46,30 @@
 #endif
 
 #include "mcocBinder.h"
+#ifdef _WIN32
+// The pointer over the game's frame, in its pixels (mcoc/win/mcocWin.c).
+extern "C" int mcocPointer(int width, int height, float *x, float *y, int *button);
+#endif
 
 #define binderLog(...) fprintf(stderr, "unity: mcoc: " __VA_ARGS__)
 
 // The Cozette font (MIT, src/fonts), in the library.
 #define FONT_STR2(x) #x
 #define FONT_STR(x) FONT_STR2(x)
-__asm__(".section .rodata\n"
+#ifdef _WIN32
+// PE: no .previous; the compiler names its own sections after this
+#define FONT_SECTION ".section .rdata,\"dr\"\n"
+#define FONT_SECTION_END ".text\n"
+#else
+#define FONT_SECTION ".section .rodata\n"
+#define FONT_SECTION_END ".previous\n"
+#endif
+__asm__(FONT_SECTION
         ".balign 16\n"
         "mcocCozetteTtf:\n"
         ".incbin \"" FONT_STR(OVERLAY_FONT_PATH) "\"\n"
         "mcocCozetteTtfEnd:\n"
-        ".previous\n");
+        FONT_SECTION_END);
 extern "C" const unsigned char mcocCozetteTtf[], mcocCozetteTtfEnd[];
 static const float COZETTE_SIZE = 13.0f;
 
@@ -873,8 +887,10 @@ static bool setUp(void)
         int t = cards[i].series ? 0 : 1;
         tabCards[t][tabCount[t]++] = i;
     }
+#ifndef _WIN32
     void *x11 = dlopen("libX11.so.6", RTLD_NOW);
     queryPointer = x11 ? (QueryPointerFn)dlsym(x11, "XQueryPointer") : NULL;
+#endif
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -926,6 +942,18 @@ extern "C" void mcocBinderDraw(void *display, unsigned long drawable, int W, int
     lastTime = t;
     io.DisplaySize = ImVec2((float)W, (float)H);
     io.DisplayFramebufferScale = ImVec2(1, 1);
+#ifdef _WIN32
+    if (open)
+    {
+        float px, py;
+        int button;
+        if (mcocPointer(W, H, &px, &py, &button))
+        {
+            io.AddMousePosEvent(px, py);
+            io.AddMouseButtonEvent(0, button != 0);
+        }
+    }
+#endif
     if (queryPointer && display && open)
     {
         unsigned long root, child;

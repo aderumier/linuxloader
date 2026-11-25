@@ -8,6 +8,8 @@
 // Once a frame from the game's main thread (the RIO2's update,
 // mcocPlugins.c).
 void mcocFrame(void);
+// Windows' part of it (mcoc/win/mcocWin.c).
+void mcocWinFrame(void);
 // The webcams the game is offered (mcocWebcam.c): 2 (one maybe blank), or 0.
 int mcocWebcamCount(void);
 // The test menu's scanner assignment, set to them unless it names them.

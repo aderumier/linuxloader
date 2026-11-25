@@ -127,6 +127,8 @@ static int mcocMatrix(int bank, int sw, uint32_t *value)
 // ---------------------------------------------------------------------------
 // The cabinet.
 
+#ifndef _WIN32
+// On Windows (mcoc/win), mcocWin.c maps the cabinet's paths and commands.
 // The game runs from the cabinet's /pm, the game's directory (the run tree,
 // its current one), and copies its offline cache to root's Unity data,
 // /root/.config/unity3d/Kabam/Champions, where the player keeps it
@@ -258,12 +260,16 @@ static void mcocCommand(const char *name, char *const argv[])
     }
 }
 
+#endif
+
 const UnityGame mcocGame = {
     .name = "Marvel Contest of Champions",
     .dataDir = "/mcoc2_Data",
+#ifndef _WIN32
     .init = mcocInit,
     .mapPath = mcocMapPath,
     .command = mcocCommand,
+#endif
     // Kabam's servers, its CDN, its chat: it runs from its offline cache.
     .offline = 1,
     .switches = mcocSwitches,

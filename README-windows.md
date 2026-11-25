@@ -27,6 +27,7 @@ linuxloader\
   run-centipede.bat games\Centipede Chaos\
   run-halo.bat      games\Halo Fireteam Raven\
   run-minecraft.bat games\Minecraft Dungeons Arcade\
+  run-mcoc.bat      games\Marvel Contest of Champions\
   setup-wheel.bat
   run-cb.bat        games\Cruis'n Blast\
   run-jp.bat        games\Jurassic Park\
@@ -222,6 +223,31 @@ The cabinet scans paper cards with webcams; here F3 to F6 (or Select+Start on
 a pad) open a card binder for player 1 to 4: arrows pick, Space takes a card
 into the hand, Q/E change the kind, Enter scans the hand, Backspace closes (on
 a pad: A, LB/RB, Start, B). Esc or Alt+F4 quits the game.
+
+## Marvel Contest of Champions
+
+A Unity game: its Linux dump runs on Unity's own Windows player of the same
+version (2021.3.23f1), from the same folder, which still runs on Linux. The
+folder needs, beside the Linux files:
+
+- `mcoc2.exe` and `mcocwin.dll`, from this release's `mcoc` folder;
+- `UnityPlayer.dll` and `MonoBleedingEdge\`, Unity's Windows player, and
+  `mcoc2_Data\Managed_win32\`, the Windows builds of Mono's libraries the game
+  ships. They are Unity's, not in this release: `tools/mcoc-add-windows.sh`
+  (on Linux) downloads them from Unity and adds them, with the two files
+  above, to a game folder.
+
+`run-mcoc.bat` uses `linuxloader.ini` (`[Display]` `WIDTH`, `HEIGHT`,
+`FULLSCREEN`); the log is `mcocwin.log` in the game's folder, Unity's in
+`rt_data\unity.log`. The game draws with OpenGL.
+
+Keys, MAME's: player 1 the arrows and left Ctrl, left Alt, Space, left Shift
+(light, medium, heavy, special attack), player 2 R, F, D, G and A, S, Q, W;
+1 and 2 start, 5 and 6 coins, F2 test, 9 service, Page Up/Down the volume.
+XInput pads 1 and 2: the left stick or the D-pad, X light, Y medium, B heavy,
+A special, Start, Back a coin; pad 1's shoulders the volume. No webcam yet:
+on the scan screen, the stick left/right picks a champion and down opens the
+card binder. Esc or Alt+F4 quits.
 
 ## More
 

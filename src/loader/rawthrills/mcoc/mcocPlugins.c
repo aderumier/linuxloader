@@ -358,6 +358,9 @@ void mcocFrame(void)
         mcocCards(onScan);
         mcocHandCards(onScan);
     }
+#ifdef _WIN32
+    mcocWinFrame();
+#endif
     frames++;
 }
 
