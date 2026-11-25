@@ -934,18 +934,53 @@ void addBinding(ControlBinding binding)
     }
 }
 
+// A default binding, its combo group (the default tables number theirs 1,
+// 2...) made one of gComboGroups, set up as parseAndApplyBindings sets up a
+// controls.ini's: a group left empty (player 0, action 0: Test, no inputs)
+// would hold the test switch once its buttons are let go (0 of 0 held).
+static void addDefaultBinding(ControlBinding binding, int groupOf[MAX_COMBINATION_GROUPS])
+{
+    int id = binding.comboGroupId;
+    if (id >= 0)
+    {
+        if (id >= MAX_COMBINATION_GROUPS)
+            return;
+        if (groupOf[id] < 0)
+        {
+            if (gNumComboGroups >= MAX_COMBINATION_GROUPS)
+                return;
+            groupOf[id] = gNumComboGroups++;
+            ComboGroup *g = &gComboGroups[groupOf[id]];
+            memset(g, 0, sizeof(*g));
+            g->action = binding.action;
+            g->player = binding.player;
+        }
+        ComboGroup *g = &gComboGroups[groupOf[id]];
+        if (binding.comboInputIndex < 0 || binding.comboInputIndex >= MAX_INPUTS_PER_COMBO)
+            return;
+        if (binding.comboInputIndex + 1 > g->numInputs)
+            g->numInputs = binding.comboInputIndex + 1;
+        binding.comboGroupId = groupOf[id];
+    }
+    addBinding(binding);
+}
+
 /**
  * @brief Applies the default control mappings if controls.ini is not found.
  * Iterates through the default binding arrays and adds them to the system.
  */
 void setDefaultMappings()
 {
+    int groupOf[MAX_COMBINATION_GROUPS];
+    for (int i = 0; i < MAX_COMBINATION_GROUPS; i++)
+        groupOf[i] = -1;
+
     log_warn("Applying default mappings...\n");
 
     // Add common bindings
     for (size_t i = 0; i < gDefaultCommonBindingsSize; i++)
     {
-        addBinding(gDefaultCommonBindings[i]);
+        addDefaultBinding(gDefaultCommonBindings[i], groupOf);
     }
 
     // Add game-specific bindings
@@ -982,7 +1017,7 @@ void setDefaultMappings()
     {
         for (size_t i = 0; i < bindingsCount; i++)
         {
-            addBinding(game_bindings[i]);
+            addDefaultBinding(game_bindings[i], groupOf);
         }
     }
 }
@@ -1337,7 +1372,7 @@ int loadProfileFromIni(const IniSection *section)
 
     if (strcmp(section->name, "Common") == 0 && !exitGameFound)
     {
-        parseAndApplyBindings("KEY_Escape, GC0_BUTTON_START + GC0_BUTTON_BACK, JOY0_BUTTON_11 + JOY0_BUTTON_10", SYSTEM, LA_ExitGame);
+        parseAndApplyBindings("KEY_Escape, GC0_BUTTON_START + GC0_BUTTON_GUIDE, JOY0_BUTTON_11 + JOY0_BUTTON_10", SYSTEM, LA_ExitGame);
     }
 
     return 1;
