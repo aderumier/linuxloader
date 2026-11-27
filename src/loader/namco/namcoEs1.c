@@ -1268,7 +1268,7 @@ const char *namcoEs1RedirectPath(const char *path, char *buf, size_t size)
         for (const char *const *overlay = g->dataOverlays; rest && *rest && *overlay; overlay++)
         {
             snprintf(fallback, sizeof(fallback), "%s/%s/%s", gameDir, *overlay, rest);
-            if (syscall(SYS_access, fallback, F_OK) == 0)
+            if (namcoEs1FileExists(fallback))
             {
                 snprintf(buf, size, "%s", fallback);
                 return buf;

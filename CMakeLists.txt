@@ -346,9 +346,9 @@ elseif(WIN32 OR MINGW OR CMAKE_C_COMPILER MATCHES "mingw")
     )
 
 
-    # WMMT4 (its in-loader server, POSIX sockets) and Gundam (WIP on Linux)
+    # WMMT4 and WMMT5DX+ (their in-loader server, POSIX sockets) and Gundam (WIP on Linux)
     # are not ported yet.
-    list(FILTER SRC_FILES EXCLUDE REGEX "namcoEs1Wmmt4|namcoEs1Gundam")
+    list(FILTER SRC_FILES EXCLUDE REGEX "namcoEs1Wmmt4|namcoEs1Wmmt5|namcoEs1Gundam")
     # glibc's errno for the Gaelco executables: the resolver answers it here.
     list(FILTER SRC_FILES EXCLUDE REGEX "gaelcoErrno")
 
