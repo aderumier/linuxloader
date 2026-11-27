@@ -327,3 +327,16 @@ void namcoEs1Wmmt4CardInstall(void)
     detour(0x08ac3ad6, (void *)auth);        // BngRwReqAiccAuth
     detour(0x08ac387e, (void *)waitTouch);   // BngRwReqWaitTouch
 }
+
+// The card for another game's reader (5DX+, namcoEs1Wmmt5.c): its 168-byte
+// record, the identity made or read once (save/server/card.ini).
+const uint8_t *namcoEs1Wmmt4CardRecord(void)
+{
+    static int loaded;
+    if (!loaded)
+    {
+        loaded = 1;
+        loadCard();
+    }
+    return record;
+}

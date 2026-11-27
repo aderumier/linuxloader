@@ -20,6 +20,7 @@
 #include <time.h>
 
 #include "namcoEs1Wmmt4Server.h"
+#include "../config/config.h"
 
 #define SHOP_NAME "LINUXLOADER"
 #define PLACE_ID "JPN0FFF0"
@@ -265,7 +266,12 @@ void wmmt4ServerHandle(const char *host, const char *path, const uint8_t *body, 
     if (!strncmp(path, "/sys/servlet/PowerOn", 20))
         allnetPowerOn(body, length, response);
     else if (strstr(path, "/method/") || strstr(path, "/resource/"))
-        wmmt4RpcHandle(path, body, length, response);
+    {
+        if (getConfig()->crc32 == WMMT5DXP_ES1)
+            wmmt5RpcHandle(path, body, length, response);
+        else
+            wmmt4RpcHandle(path, body, length, response);
+    }
     else if (strstr(path, ".do"))
         mucha(path, body, length, response);
 }

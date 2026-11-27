@@ -121,6 +121,8 @@ int initJVS()
         // the same profile.
         if (getConfig()->crc32 == WMMT4_ES1)
             strcpy(io.capabilities.name, "namco ltd.;NA-JV;Ver4.00;JPN,Multipurpose.");
+        else if (getConfig()->crc32 == WMMT5DXP_ES1) // the fork's, without the dot
+            strcpy(io.capabilities.name, "namco ltd.;NA-JV;Ver4.00;JPN,Multipurpose");
         else
             strcpy(io.capabilities.name, "namco ltd.;ES1-JAMMA;Ver1.00;USA,Driving");
     }

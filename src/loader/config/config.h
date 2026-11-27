@@ -50,6 +50,7 @@
 #define DHRIDERS_ES1 0x5d3df1cd                                  // Namco ES1, DH RIDERS (rev 1247)
 #define DEADHEAT_ES1 0x7a3a5554                                  // Namco ES1, US DRIVE (rev 6273)
 #define WMMT4_ES1 0x5031e0db                                     // Namco ES1, WMN4r (rev 1.10.18)
+#define WMMT5DXP_ES1 0x6c5079a3                                  // Namco ES1, WMN5r (5DX+ export 2.20.02)
 #define MAXIMUMHEAT3D_ES1 0xf932e88e                             // Namco ES1, US DRIVE (rev 8807)
 #define WMMT3_N2 0xec016afd                                      // Namco N2, WM3100-3-NA-DAT0-A70 (export)
 #define WMMT3DXPLUS_N2 0x85a0e7ab                                // Namco N2, W3P100-1-NA-DAT0-B02

@@ -26,11 +26,15 @@ typedef struct
 void wmmt4ServerHandle(const char *host, const char *path, const uint8_t *body, size_t length,
                        Wmmt4Response *response);
 
-// The game server's RPCs and resources (namcoEs1Wmmt4Rpc.c).
+// The game server's RPCs and resources (namcoEs1Wmmt4Rpc.c; 5DX+'s:
+// namcoEs1Wmmt5Rpc.c).
 void wmmt4RpcHandle(const char *path, const uint8_t *body, size_t length, Wmmt4Response *response);
+void wmmt5RpcHandle(const char *path, const uint8_t *body, size_t length, Wmmt4Response *response);
 
-// The Banapassport card reader (namcoEs1Wmmt4Card.c).
+// The Banapassport card reader (namcoEs1Wmmt4Card.c), and its card's
+// 168-byte record for 5DX+'s reader.
 void namcoEs1Wmmt4CardInstall(void);
+const uint8_t *namcoEs1Wmmt4CardRecord(void);
 
 // The redirections to the loader's server and the server itself.
 void namcoEs1Wmmt4NetInstall(void);

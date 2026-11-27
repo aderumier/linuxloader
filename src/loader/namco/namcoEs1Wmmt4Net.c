@@ -66,9 +66,9 @@ __attribute__((force_align_arg_pointer)) static int gameGetaddrinfo(const char *
     int local = serverName(node);
     struct addrinfo numeric;
     struct in_addr literal;
-    // The local server's address, and the LAN's numeric ones, answered on a
-    // machine without a network too (AI_ADDRCONFIG refused them there: no
-    // IPv4 address but loopback).
+    // The local server's address, and the LAN's numeric ones (5DX+'s
+    // terminal, 192.168.92.15), answered on a machine without a network too
+    // (AI_ADDRCONFIG refused them there: no IPv4 address but loopback).
     if (hints && (local || (node && inet_pton(AF_INET, node, &literal) == 1)))
     {
         numeric = *hints;
@@ -101,7 +101,11 @@ __attribute__((force_align_arg_pointer)) static int gameConnect(int fd, const st
         struct sockaddr_in to = *(const struct sockaddr_in *)address;
         uint16_t port = ntohs(to.sin_port);
         int server = to.sin_addr.s_addr == inet_addr(SERVER_ADDRESS);
-        if (server || (to.sin_addr.s_addr == htonl(INADDR_LOOPBACK) && (port == 443 || port == 9002 || port == 10082)))
+        // 5DX+'s terminal (127.0.0.4, namcoEs1Wmmt5.c): its HTTPS proxy.
+        int terminal = (to.sin_addr.s_addr == htonl(0x7f000004) || to.sin_addr.s_addr == inet_addr("192.168.92.15")) &&
+                       port == 50765;
+        if (server || terminal ||
+            (to.sin_addr.s_addr == htonl(INADDR_LOOPBACK) && (port == 443 || port == 9002 || port == 10082)))
         {
             if (wmmt4ServerTrace)
                 fprintf(stderr, "WMMT4 server: connect %s:%u -> the loader's server\n",

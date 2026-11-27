@@ -70,6 +70,16 @@ static const uint8_t wmmt4Eth0[] = {192, 168, 92, 11, 255, 255, 255, 0};
 static const char *const wmmt4FileFallbacks[] = {"data/Common/DefaultTarget/DEFAULT_GHOST_JP.BIN",
                                                  "data/Common/DefaultTarget/DEFAULT_GHOST.BIN", NULL};
 
+// WMMT5DX+'s packages, mounted over data/ on the cabinet.
+static const char *const wmmt5DataOverlays[] = {"data_en", "data_ng_lnx", NULL};
+// The cabinet's save partitions, mounted under save/ by its storage script
+// (wangan4_storage): the game makes none of them, its settings, books and
+// logs are not written without them.
+static const char *const wmmt5Directories[] = {
+    "save",          "save/banacoin00", "save/banacoin01", "save/billing00", "save/billing01",
+    "save/bookkeep00", "save/bookkeep01", "save/contents",  "save/database00", "save/database01",
+    "save/errorlog00", "save/errorlog01", "save/setting00", "save/setting01",  NULL};
+
 static const NamcoEs1Game games[] = {
     {
         // Mobile Suit Gundam: Bonds of the Battlefield (Senjo no Kizuna,
@@ -281,6 +291,24 @@ static const NamcoEs1Game games[] = {
         .commandOutput = namcoEs1Wmmt4CommandOutput,
         .eth0 = wmmt4Eth0,
         .fileFallbacks = wmmt4FileFallbacks,
+    },
+    {
+        // Wangan Midnight Maximum Tune 5DX+ (WMN5r, export 2.20.02): WMMT4's
+        // cabinet, its hooks in namcoEs1Wmmt5.c.
+        .crc32 = WMMT5DXP_ES1,
+        .fileCrc32 = 0x3f5ab62b,
+        .jvsDevice = "/dev/ttyS2",
+        // Its steering board (STR3, /dev/ttyS0) is absent: namcoEs1Wmmt5.c.
+        .rootPath = "/opt/arcade/exec",
+        .keyboardAnalog = 1,
+        .soundEmulation = 1,
+        .windowX11 = 1,
+        .install = namcoEs1Wmmt5Install,
+        .panel = namcoEs1Wmmt4Panel,
+        .commandOutput = namcoEs1Wmmt4CommandOutput,
+        .eth0 = wmmt4Eth0,
+        .dataOverlays = wmmt5DataOverlays,
+        .cabinetDirectories = wmmt5Directories,
     },
 };
 
